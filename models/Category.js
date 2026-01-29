@@ -1,0 +1,26 @@
+const mongoose = require('mongoose');
+
+const subcategorySchema = new mongoose.Schema({
+    name: { type: String, required: true },
+    slug: { type: String },
+    status: { type: String, enum: ['active', 'inactive'], default: 'active' },
+    createdAt: { type: Date, default: Date.now }
+});
+
+const categorySchema = new mongoose.Schema({
+    name: { type: String, required: true, unique: true },
+    slug: { type: String, lowercase: true },
+    inputType: { type: String, default: 'Text' },
+    order: { type: Number, default: 0 },
+    icon: { type: String },
+    status: { type: Boolean, default: true },
+    createdBy: {
+        adminId: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
+        adminName: String
+    },
+    postCount: { type: Number, default: 0 }
+}, {
+    timestamps: true
+});
+
+module.exports = mongoose.model('Category', categorySchema);
