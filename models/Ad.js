@@ -30,7 +30,7 @@ const adSchema = new mongoose.Schema({
     },
     phone: {
         type: String,
-        required: true
+        required: false
     },
     phoneTypes: {
         type: [String], // ['whatsapp', 'telegram', 'call']

@@ -34,6 +34,10 @@ exports.createAd = async (req, res) => {
             actionType
         } = req.body;
 
+        if (!phone) {
+            return res.status(400).json({ success: false, message: 'Phone number is required' });
+        }
+
         // Process images
         const imagePaths = req.files ? req.files.map(file => `/uploads/${file.filename}`) : [];
 
