@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { registerUser, loginUser, getMe, updateProfile } = require('../controllers/userController');
+const { registerUser, loginUser, getMe, updateProfile, getUserActivity, updateNotifySettings } = require('../controllers/userController');
 const { requestOTP, verifyOTP } = require('../controllers/authController');
 const { authenticateUser: protect } = require('../middleware/auth');
 
@@ -29,10 +29,31 @@ router.post('/google-login', require('../controllers/userController').googleLogi
 // @access  Private
 router.get('/me', protect, getMe);
 
+// @route   GET /api/user/activity
+// @desc    Get user activity
+// @access  Private
+router.get('/activity', protect, getUserActivity);
+
+const upload = require('../middleware/upload');
+
 // @route   PUT /api/user/update
 // @desc    Update user profile
 // @access  Private
-router.put('/update', protect, updateProfile);
+router.put(
+    '/update',
+    protect,
+    upload.fields([
+        { name: 'storeBanner', maxCount: 1 },
+        { name: 'storeLogo', maxCount: 1 },
+        { name: 'photo', maxCount: 1 }
+    ]),
+    updateProfile
+);
+
+// @route   PUT /api/user/notify-settings
+// @desc    Update notification settings
+// @access  Private
+router.put('/notify-settings', protect, updateNotifySettings);
 
 // @route   POST /api/user/otp/request
 // @desc    Request OTP for verification

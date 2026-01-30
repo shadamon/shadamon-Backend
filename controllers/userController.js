@@ -139,6 +139,9 @@ const getMe = async (req, res) => {
 // @desc    Update user profile
 // @route   PUT /api/user/update
 // @access  Private
+// @desc    Update user profile
+// @route   PUT /api/user/update
+// @access  Private
 const updateProfile = async (req, res) => {
     try {
         const user = await User.findById(req.user.id);
@@ -147,18 +150,45 @@ const updateProfile = async (req, res) => {
             return res.status(404).json({ message: 'User not found' });
         }
 
-        const fields = ['name', 'mobile', 'dob', 'gender', 'storeName', 'storeLogo', 'storeBanner', 'photo', 'actionType', 'pageName', 'category'];
+        const fields = [
+            'name', 'mobile', 'dob', 'gender', 'storeName',
+            'actionType', 'pageName', 'category', 'location',
+            'education', 'aboutYourself', 'profession', 'professionalExperience', 'sellerPageUrl', 'aboutBusiness',
+            'additionalMobiles'
+        ];
 
+        // 1. Handle Text Fields
         fields.forEach(field => {
             if (req.body[field] !== undefined) {
                 user[field] = req.body[field];
-
-                // If an image is updated, set its status to 'pending'
-                if (field === 'storeLogo') user.storeLogoStatus = 'pending';
-                if (field === 'storeBanner') user.storeBannerStatus = 'pending';
-                if (field === 'photo') user.photoStatus = 'pending';
             }
         });
+
+        // 2. Handle File Uploads (mapped from req.files)
+        if (req.files) {
+            if (req.files.storeBanner?.[0]) {
+                // Assuming your server serves uploads from root '/uploads'
+                user.storeBanner = `/uploads/${req.files.storeBanner[0].filename}`;
+                user.storeBannerStatus = 'pending';
+            }
+
+            if (req.files.storeLogo?.[0]) {
+                user.storeLogo = `/uploads/${req.files.storeLogo[0].filename}`;
+                user.storeLogoStatus = 'pending';
+            }
+
+            if (req.files.photo?.[0]) {
+                user.photo = `/uploads/${req.files.photo[0].filename}`;
+                user.photoStatus = 'pending';
+            }
+        }
+
+        // Handle Base64 strings ONLY if they are coming as text (fallback for older frontend code)
+        // But preferable to rely on req.files now.
+        // If frontend sends base64, it might come in body.storeBanner. 
+        // We should check if it's NOT a base64 string to avoid overwriting file with string if logic mixed.
+        // Actually, with upload.fields, body fields might be present.
+        // Let's prioritize file uploads.
 
         // If email update is requested, check for uniqueness (optional, skipped for now to avoid complexity)
         // if (req.body.email && req.body.email !== user.email) { ... }
@@ -415,6 +445,59 @@ const getPremiumUsers = async (req, res) => {
     }
 };
 
+const Payment = require('../models/Payment');
+
+// ... existing code ...
+
+// @desc    Get user activity details
+// @route   GET /api/user/activity
+// @access  Private
+const getUserActivity = async (req, res) => {
+    try {
+        const user = await User.findById(req.user.id)
+            .populate('following', 'name storeName photo')
+            .populate({
+                path: 'favorites',
+                select: 'headline price images user',
+                populate: { path: 'user', select: 'name storeName' }
+            });
+
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        const payments = await Payment.find({ user: req.user.id }).sort({ createdAt: -1 });
+
+        res.json({
+            following: user.following,
+            favorites: user.favorites,
+            notifyCategories: user.notifyCategories,
+            payments
+        });
+    } catch (err) {
+        console.error('Error fetching activity:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+// @desc    Update notification settings
+// @route   PUT /api/user/notify-settings
+// @access  Private
+const updateNotifySettings = async (req, res) => {
+    try {
+        const { categories } = req.body;
+        const user = await User.findById(req.user.id);
+        if (!user) return res.status(404).json({ message: 'User not found' });
+
+        user.notifyCategories = categories;
+        await user.save();
+        res.json({ message: 'Notification settings updated', categories: user.notifyCategories });
+    } catch (err) {
+        console.error('Error updating notify settings:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
 module.exports = {
     registerUser,
     loginUser,
@@ -422,5 +505,7 @@ module.exports = {
     updateProfile,
     facebookLogin,
     googleLogin,
-    getPremiumUsers
+    getPremiumUsers,
+    getUserActivity,
+    updateNotifySettings
 };

@@ -16,14 +16,14 @@ const adSchema = new mongoose.Schema({
     },
     category: {
         type: String,
-        required: true
+        required: false
     },
     subCategory: {
         type: String
     },
     location: {
         type: String,
-        required: true
+        required: false
     },
     subLocation: {
         type: String

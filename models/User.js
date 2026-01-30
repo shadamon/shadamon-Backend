@@ -60,6 +60,13 @@ const UserSchema = new mongoose.Schema({
         enum: ['Free', 'Premium', 'Free Saller'],
         default: 'Free'
     },
+    // Extended Profile Fields
+    education: { type: String },
+    aboutYourself: { type: String },
+    profession: { type: String },
+    professionalExperience: { type: String },
+    sellerPageUrl: { type: String, unique: true, sparse: true }, // Slug for shop URL
+    aboutBusiness: { type: String },
     storeLogo: {
         type: String // Base64 or URL
     },
@@ -87,6 +94,20 @@ const UserSchema = new mongoose.Schema({
     createdAt: {
         type: Date,
         default: Date.now
+    },
+    following: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        default: []
+    }],
+    favorites: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Ad',
+        default: []
+    }],
+    notifyCategories: {
+        type: [String],
+        default: []
     }
 });
 
