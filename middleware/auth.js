@@ -55,8 +55,29 @@ const authenticateUser = (req, res, next) => {
     }
 };
 
+// Optional Authentication
+const optionalAuthenticateUser = (req, res, next) => {
+    let token = req.cookies?.token;
+
+    const authHeader = req.headers.authorization;
+    if (!token && authHeader && authHeader.startsWith('Bearer ')) {
+        token = authHeader.split(' ')[1];
+    }
+
+    if (token) {
+        try {
+            const decoded = jwt.verify(token, process.env.JWT_SECRET);
+            req.user = decoded;
+        } catch (err) {
+            // Invalid token, just proceed as guest
+        }
+    }
+    next();
+};
+
 module.exports = {
     verifyToken,
     checkSuperAdmin,
-    authenticateUser
+    authenticateUser,
+    optionalAuthenticateUser
 };

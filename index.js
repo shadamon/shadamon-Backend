@@ -8,6 +8,7 @@ const adminRoutes = require('./routes/adminRoutes');
 const adRoutes = require('./routes/adRoutes');
 const categoryRoutes = require('./routes/categoryRoutes');
 const locationRoutes = require('./routes/locationRoutes');
+const premierOpportunityRoutes = require('./routes/premierOpportunityRoutes');
 
 console.log('✅ Routes imported successfully');
 console.log('User routes:', typeof userRoutes);
@@ -69,6 +70,7 @@ app.use('/api/admins', adminRoutes);
 app.use('/api/ads', adRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/locations', locationRoutes);
+app.use('/api/premier-opportunity', premierOpportunityRoutes);
 
 // 404 handler
 app.use((req, res) => {

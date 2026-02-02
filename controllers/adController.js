@@ -5,20 +5,21 @@ const fs = require('fs');
 const path = require('path');
 
 const User = require('../models/User'); // Import User model
+const PromotionPlan = require('../models/PromotionPlan'); // Import PromotionPlan model
 
 // @route   POST api/ads
 // @desc    Create a new ad
-// @access  Private
+// @access  Public (Optional Auth)
 exports.createAd = async (req, res) => {
     try {
-        const user = await User.findById(req.user.id);
-        if (!user) return res.status(404).json({ success: false, message: 'User not found' });
-
-        if (user.verifiedBy === 'Not Verified') {
-            return res.status(403).json({
-                success: false,
-                message: 'Account not verified. Please verify your account to post ads.'
-            });
+        // Optional: Associate with user if logged in
+        let userId = null;
+        if (req.user) {
+            const user = await User.findById(req.user.id);
+            if (user) {
+                userId = user._id;
+                // Removed verification check as per requirement
+            }
         }
 
         const {
@@ -42,7 +43,7 @@ exports.createAd = async (req, res) => {
         const imagePaths = req.files ? req.files.map(file => `/uploads/${file.filename}`) : [];
 
         const newAd = new Ad({
-            user: req.user.id, // From auth middleware
+            user: userId, // Can be null now
             headline,
             description,
             category,
@@ -615,6 +616,22 @@ exports.deleteAdAdmin = async (req, res) => {
         });
     } catch (err) {
         console.error("Error deleting ad by admin:", err.message);
+        res.status(500).json({ success: false, message: 'Server Error' });
+    }
+};
+
+// @route   GET api/ads/public/promotion-plans
+// @desc    Get all promotion plans for public use
+// @access  Public
+exports.getAllPromotionPlansPublic = async (req, res) => {
+    try {
+        const plans = await PromotionPlan.find().sort({ createdAt: -1 });
+        res.json({
+            success: true,
+            data: plans
+        });
+    } catch (err) {
+        console.error("Error fetching promotion plans:", err.message);
         res.status(500).json({ success: false, message: 'Server Error' });
     }
 };

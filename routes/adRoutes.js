@@ -1,15 +1,15 @@
 const express = require('express');
 const router = express.Router();
 const adController = require('../controllers/adController');
-const { authenticateUser, verifyToken } = require('../middleware/auth');
+const { authenticateUser, verifyToken, optionalAuthenticateUser } = require('../middleware/auth');
 const upload = require('../middleware/upload');
 
 // @route   POST api/ads
 // @desc    Create a new ad
-// @access  Private (User)
+// @access  Public (Optional Auth)
 router.post(
     '/',
-    authenticateUser,
+    optionalAuthenticateUser,
     upload.array('images', 5), // 'images' is the field name, max 5 files
     adController.createAd
 );
@@ -41,6 +41,11 @@ router.put('/:id/promote', authenticateUser, adController.promoteAd);
 // @desc    Get all active ads for public feed
 // @access  Public
 router.get('/public/all', adController.getAllAdsPublic);
+
+// @route   GET api/ads/public/promotion-plans
+// @desc    Get all promotion plans
+// @access  Public
+router.get('/public/promotion-plans', adController.getAllPromotionPlansPublic);
 
 // @route   GET api/ads/public/:id
 // @desc    Get single public ad

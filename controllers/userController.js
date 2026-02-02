@@ -10,20 +10,33 @@ const registerUser = async (req, res) => {
 
     try {
         // Validate required fields
-        if (!name || !email || !password) {
-            return res.status(400).json({ message: 'Name, email, and password are required' });
+        if (!name || !password) {
+            return res.status(400).json({ message: 'Name and password are required' });
+        }
+
+        if (!email && !mobile) {
+            return res.status(400).json({ message: 'Email or Mobile number is required' });
         }
 
         // Check if user already exists
-        const existingUser = await User.findOne({ email });
-        if (existingUser) {
-            return res.status(400).json({ message: 'User with this email already exists' });
+        if (email) {
+            const existingUser = await User.findOne({ email });
+            if (existingUser) {
+                return res.status(400).json({ message: 'User with this email already exists' });
+            }
+        }
+
+        if (mobile) {
+            const existingMobile = await User.findOne({ mobile });
+            if (existingMobile) {
+                return res.status(400).json({ message: 'User with this mobile number already exists' });
+            }
         }
 
         // Create new user (password will be hashed automatically by the pre-save hook)
         const newUser = new User({
             name,
-            email,
+            email: email || undefined,
             password,
             dob: dob || undefined,
             gender: gender || undefined,
@@ -72,18 +85,22 @@ const loginUser = async (req, res) => {
 
     try {
         // Validate input
-        if (!email || !password) {
+        if ((!email && !req.body.mobile) || !password) {
             return res.status(400).json({ message: 'Email/Mobile and password are required' });
         }
 
         // Find user by email OR mobile
-        // usage of 'email' parameter as a generic identifier
-        const user = await User.findOne({
-            $or: [
-                { email: email },
-                { mobile: email }
-            ]
-        });
+        let user;
+        if (email) {
+            user = await User.findOne({
+                $or: [
+                    { email: email },
+                    { mobile: email }
+                ]
+            });
+        } else if (req.body.mobile) {
+            user = await User.findOne({ mobile: req.body.mobile });
+        }
 
         if (!user) {
             return res.status(400).json({ message: 'Invalid credentials' });
@@ -498,6 +515,17 @@ const updateNotifySettings = async (req, res) => {
     }
 };
 
+const checkMobile = async (req, res) => {
+    const { mobile } = req.body;
+    try {
+        const user = await User.findOne({ mobile });
+        res.json({ exists: !!user });
+    } catch (err) {
+        console.error('Error checking mobile:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
 module.exports = {
     registerUser,
     loginUser,
@@ -507,5 +535,6 @@ module.exports = {
     googleLogin,
     getPremiumUsers,
     getUserActivity,
-    updateNotifySettings
+    updateNotifySettings,
+    checkMobile
 };

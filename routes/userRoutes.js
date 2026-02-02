@@ -13,6 +13,7 @@ router.post('/register', registerUser);
 // @desc    Login user
 // @access  Public
 router.post('/login', loginUser);
+router.post('/check-mobile', require('../controllers/userController').checkMobile);
 
 // @route   POST /api/user/facebook-login
 // @desc    Login with Facebook
