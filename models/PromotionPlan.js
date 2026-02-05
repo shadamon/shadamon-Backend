@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 const promotionPlanSchema = new mongoose.Schema({
-    subCategories: [{
+    categories: [{
         type: String,
         required: true
     }],

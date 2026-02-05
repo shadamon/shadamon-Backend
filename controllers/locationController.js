@@ -1,5 +1,6 @@
 const Location = require('../models/Location');
 const SubLocation = require('../models/SubLocation');
+const { fileToBase64, processImageString } = require('../utils/imageHelper');
 
 // --- Location Controllers ---
 exports.createLocation = async (req, res) => {
@@ -16,7 +17,7 @@ exports.createLocation = async (req, res) => {
                 adminId: req.admin.id,
                 adminName: req.admin.name || 'Admin'
             },
-            image: req.file ? `/uploads/${req.file.filename}` : undefined
+            image: req.file ? fileToBase64(req.file) : processImageString(req.body.image)
         });
 
         await location.save();
@@ -35,7 +36,12 @@ exports.updateLocation = async (req, res) => {
             order
         };
         if (name) updateData.slug = name.toLowerCase().replace(/ /g, '-');
-        if (req.file) updateData.image = `/uploads/${req.file.filename}`;
+        if (req.file) {
+            updateData.image = fileToBase64(req.file);
+        } else if (req.body.image) {
+            const processed = processImageString(req.body.image);
+            if (processed) updateData.image = processed;
+        }
 
         const location = await Location.findByIdAndUpdate(req.params.id, updateData, { new: true });
         res.json({ success: true, data: location });
@@ -68,22 +74,30 @@ exports.deleteLocation = async (req, res) => {
 exports.createSubLocation = async (req, res) => {
     try {
         const { name, location, mapLink, order, status } = req.body;
+        const names = Array.isArray(name) ? name : [name];
+        const subLocations = [];
 
-        const subLocation = new SubLocation({
-            name,
-            location,
-            mapLink,
-            order,
-            status: status === 'true' || status === true,
-            image: req.file ? `/uploads/${req.file.filename}` : undefined,
-            createdBy: {
-                adminId: req.admin.id,
-                adminName: req.admin.name || 'Admin'
-            }
-        });
+        for (const subName of names) {
+            if (!subName.trim()) continue;
 
-        await subLocation.save();
-        res.status(201).json({ success: true, data: subLocation });
+            const subLocation = new SubLocation({
+                name: subName,
+                location,
+                mapLink,
+                order,
+                status: status === 'true' || status === true,
+                image: req.file ? fileToBase64(req.file) : processImageString(req.body.image),
+                createdBy: {
+                    adminId: req.admin.id,
+                    adminName: req.admin.name || 'Admin'
+                }
+            });
+
+            await subLocation.save();
+            subLocations.push(subLocation);
+        }
+
+        res.status(201).json({ success: true, data: subLocations.length === 1 ? subLocations[0] : subLocations });
     } catch (err) {
         console.error('Error creating sublocation:', err);
         res.status(500).json({ success: false, message: err.message });
@@ -100,7 +114,12 @@ exports.updateSubLocation = async (req, res) => {
             order,
             status: status === 'true' || status === true
         };
-        if (req.file) updateData.image = `/uploads/${req.file.filename}`;
+        if (req.file) {
+            updateData.image = fileToBase64(req.file);
+        } else if (req.body.image) {
+            const processed = processImageString(req.body.image);
+            if (processed) updateData.image = processed;
+        }
 
         const subLocation = await SubLocation.findByIdAndUpdate(req.params.id, updateData, { new: true });
         res.json({ success: true, data: subLocation });

@@ -2,6 +2,7 @@ const Admin = require('../models/Admin');
 const User = require('../models/User');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const { fileToBase64, processImageString } = require('../utils/imageHelper');
 
 // @desc    Admin login
 // @route   POST /api/auth/login
@@ -179,9 +180,10 @@ const addUser = async (req, res) => {
             name, email, password, dob, gender, mobile,
             storeName, actionType, accountStatus, verifiedBy,
             location, category, pageName, merchantType,
-            photo: req.files?.photo ? `/uploads/${req.files.photo[0].filename}` : undefined,
-            storeLogo: req.files?.storeLogo ? `/uploads/${req.files.storeLogo[0].filename}` : undefined,
-            storeBanner: req.files?.storeBanner ? `/uploads/${req.files.storeBanner[0].filename}` : undefined
+
+            photo: req.files?.photo ? fileToBase64(req.files.photo[0]) : processImageString(req.body.photo),
+            storeLogo: req.files?.storeLogo ? fileToBase64(req.files.storeLogo[0]) : processImageString(req.body.storeLogo),
+            storeBanner: req.files?.storeBanner ? fileToBase64(req.files.storeBanner[0]) : processImageString(req.body.storeBanner)
         });
 
         await newUser.save();
@@ -225,16 +227,33 @@ const updateUser = async (req, res) => {
         if (location) user.location = location;
         if (category) user.category = category;
         if (pageName) user.pageName = pageName;
-        if (pageName) user.pageName = pageName;
+
         if (merchantType) user.merchantType = merchantType;
         if (storeLogoStatus) user.storeLogoStatus = storeLogoStatus;
         if (storeBannerStatus) user.storeBannerStatus = storeBannerStatus;
         if (photoStatus) user.photoStatus = photoStatus;
 
         // Process images
-        if (req.files?.photo) user.photo = `/uploads/${req.files.photo[0].filename}`;
-        if (req.files?.storeLogo) user.storeLogo = `/uploads/${req.files.storeLogo[0].filename}`;
-        if (req.files?.storeBanner) user.storeBanner = `/uploads/${req.files.storeBanner[0].filename}`;
+        if (req.files?.photo) {
+            user.photo = fileToBase64(req.files.photo[0]);
+        } else if (req.body.photo) {
+            const processed = processImageString(req.body.photo);
+            if (processed) user.photo = processed;
+        }
+
+        if (req.files?.storeLogo) {
+            user.storeLogo = fileToBase64(req.files.storeLogo[0]);
+        } else if (req.body.storeLogo) {
+            const processed = processImageString(req.body.storeLogo);
+            if (processed) user.storeLogo = processed;
+        }
+
+        if (req.files?.storeBanner) {
+            user.storeBanner = fileToBase64(req.files.storeBanner[0]);
+        } else if (req.body.storeBanner) {
+            const processed = processImageString(req.body.storeBanner);
+            if (processed) user.storeBanner = processed;
+        }
 
         // If password is provided, it will be hashed by the pre-save hook
         if (password) user.password = password;

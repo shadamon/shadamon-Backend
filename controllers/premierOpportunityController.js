@@ -5,10 +5,17 @@ exports.getSettings = async (req, res) => {
         let settings = await PremierOpportunity.findOne();
         if (!settings) {
             settings = await PremierOpportunity.create({
-                verifyBadgePrice: 200,
+                verifyBadgePrice: 400,
+                verifyBadgeDuration: 365,
                 highlightPostPrice: 300,
-                addLabelPrice: 100,
-                freeAdCredit: 200
+                labels: [
+                    { name: 'Discount', price: 500 }
+                ],
+                freeAdCredits: [
+                    { amount: 400, forType: 'product', forValue: 'First Product', status: true },
+                    { amount: 400, forType: 'all', forValue: 'All', startDate: new Date('2026-01-01'), endDate: new Date('2026-12-31'), status: true },
+                    { amount: 100, forType: 'category', forValue: '', status: true }
+                ]
             });
         }
         res.json({ success: true, data: settings });
@@ -19,24 +26,15 @@ exports.getSettings = async (req, res) => {
 
 exports.updateSettings = async (req, res) => {
     try {
-        const { verifyBadgePrice, highlightPostPrice, addLabelPrice, freeAdCredit } = req.body;
-
-        // Find existing settings or create new one (Upsert style)
+        const updateData = req.body;
         let settings = await PremierOpportunity.findOne();
 
         if (settings) {
-            settings.verifyBadgePrice = verifyBadgePrice !== undefined ? verifyBadgePrice : settings.verifyBadgePrice;
-            settings.highlightPostPrice = highlightPostPrice !== undefined ? highlightPostPrice : settings.highlightPostPrice;
-            settings.addLabelPrice = addLabelPrice !== undefined ? addLabelPrice : settings.addLabelPrice;
-            settings.freeAdCredit = freeAdCredit !== undefined ? freeAdCredit : settings.freeAdCredit;
+            // Use Object.assign to update all fields including arrays correctly
+            Object.assign(settings, updateData);
             await settings.save();
         } else {
-            settings = await PremierOpportunity.create({
-                verifyBadgePrice,
-                highlightPostPrice,
-                addLabelPrice,
-                freeAdCredit
-            });
+            settings = await PremierOpportunity.create(updateData);
         }
 
         res.json({ success: true, data: settings, message: 'Premier Settings updated' });

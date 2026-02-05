@@ -1,6 +1,7 @@
 const Category = require('../models/Category');
 const SubCategory = require('../models/SubCategory');
 const Feature = require('../models/Feature');
+const { fileToBase64, processImageString } = require('../utils/imageHelper');
 
 // --- Category Controllers ---
 exports.createCategory = async (req, res) => {
@@ -18,7 +19,7 @@ exports.createCategory = async (req, res) => {
                 adminId: req.admin.id,
                 adminName: req.admin.name || 'Admin'
             },
-            icon: req.file ? `/uploads/${req.file.filename}` : undefined
+            icon: req.file ? fileToBase64(req.file) : processImageString(req.body.icon)
         });
 
         await category.save();
@@ -38,7 +39,12 @@ exports.updateCategory = async (req, res) => {
             order
         };
         if (name) updateData.slug = name.toLowerCase().replace(/ /g, '-');
-        if (req.file) updateData.icon = `/uploads/${req.file.filename}`;
+        if (req.file) {
+            updateData.icon = fileToBase64(req.file);
+        } else if (req.body.icon) {
+            const processed = processImageString(req.body.icon);
+            if (processed) updateData.icon = processed;
+        }
 
         const category = await Category.findByIdAndUpdate(req.params.id, updateData, { new: true });
         res.json({ success: true, data: category });
@@ -68,26 +74,45 @@ exports.deleteCategory = async (req, res) => {
 // --- SubCategory Controllers ---
 exports.createSubCategory = async (req, res) => {
     try {
-        const { name, category, feature, buttonType, freePost, order, status, tags } = req.body;
+        const { name, category, features, buttonType, freePost, order, status, tags, priceBoxShow, priceBoxName } = req.body;
 
-        const subCategory = new SubCategory({
-            name,
-            category,
-            feature: feature || undefined,
-            buttonType,
-            freePost,
-            order,
-            status: status === 'true' || status === true,
-            tags: tags || [],
-            image: req.file ? `/uploads/${req.file.filename}` : undefined,
-            createdBy: {
-                adminId: req.admin.id,
-                adminName: req.admin.name || 'Admin'
+        const names = Array.isArray(name) ? name : [name];
+        let featuresArray = [];
+        if (features) {
+            try {
+                featuresArray = typeof features === 'string' ? JSON.parse(features) : features;
+            } catch (e) {
+                featuresArray = [features];
             }
-        });
+        }
 
-        await subCategory.save();
-        res.status(201).json({ success: true, data: subCategory });
+        const subCategories = [];
+
+        for (const subName of names) {
+            if (!subName.trim()) continue;
+
+            const subCategory = new SubCategory({
+                name: subName,
+                category,
+                features: featuresArray,
+                buttonType,
+                freePost,
+                order,
+                status: status === 'true' || status === true,
+                priceBoxShow: priceBoxShow === 'true' || priceBoxShow === true,
+                priceBoxName: priceBoxName,
+                tags: tags || [],
+                image: req.file ? fileToBase64(req.file) : processImageString(req.body.image),
+                createdBy: {
+                    adminId: req.admin.id,
+                    adminName: req.admin.name || 'Admin'
+                }
+            });
+            await subCategory.save();
+            subCategories.push(subCategory);
+        }
+
+        res.status(201).json({ success: true, data: subCategories.length === 1 ? subCategories[0] : subCategories });
     } catch (err) {
         console.error('Error creating subcategory:', err);
         res.status(500).json({ success: false, message: err.message });
@@ -96,18 +121,35 @@ exports.createSubCategory = async (req, res) => {
 
 exports.updateSubCategory = async (req, res) => {
     try {
-        const { name, category, feature, buttonType, freePost, order, status, tags } = req.body;
+        const { name, category, features, buttonType, freePost, order, status, tags, priceBoxShow, priceBoxName } = req.body;
+
+        let featuresArray = [];
+        if (features) {
+            try {
+                featuresArray = typeof features === 'string' ? JSON.parse(features) : features;
+            } catch (e) {
+                featuresArray = [features];
+            }
+        }
+
         const updateData = {
             name,
             category,
-            feature: feature || undefined,
+            features: featuresArray,
             buttonType,
             freePost,
             order,
             status: status === 'true' || status === true,
+            priceBoxShow: priceBoxShow === 'true' || priceBoxShow === true,
+            priceBoxName: priceBoxName,
             tags: tags || []
         };
-        if (req.file) updateData.image = `/uploads/${req.file.filename}`;
+        if (req.file) {
+            updateData.image = fileToBase64(req.file);
+        } else if (req.body.image) {
+            const processed = processImageString(req.body.image);
+            if (processed) updateData.image = processed;
+        }
 
         const subCategory = await SubCategory.findByIdAndUpdate(req.params.id, updateData, { new: true });
         res.json({ success: true, data: subCategory });
@@ -120,7 +162,7 @@ exports.getAllSubCategories = async (req, res) => {
     try {
         const subCategories = await SubCategory.find()
             .populate('category', 'name')
-            .populate('feature', 'name')
+            .populate('features')
             .sort({ createdAt: -1 });
         res.json({ success: true, data: subCategories });
     } catch (err) {

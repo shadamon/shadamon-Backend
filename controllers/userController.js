@@ -1,6 +1,7 @@
 const User = require('../models/User');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const { fileToBase64 } = require('../utils/imageHelper');
 
 // @desc    Register a new user
 // @route   POST /api/user/register
@@ -184,19 +185,27 @@ const updateProfile = async (req, res) => {
         // 2. Handle File Uploads (mapped from req.files)
         if (req.files) {
             if (req.files.storeBanner?.[0]) {
-                // Assuming your server serves uploads from root '/uploads'
-                user.storeBanner = `/uploads/${req.files.storeBanner[0].filename}`;
-                user.storeBannerStatus = 'pending';
+                const base64 = fileToBase64(req.files.storeBanner[0]);
+                if (base64) {
+                    user.storeBanner = base64;
+                    user.storeBannerStatus = 'pending';
+                }
             }
 
             if (req.files.storeLogo?.[0]) {
-                user.storeLogo = `/uploads/${req.files.storeLogo[0].filename}`;
-                user.storeLogoStatus = 'pending';
+                const base64 = fileToBase64(req.files.storeLogo[0]);
+                if (base64) {
+                    user.storeLogo = base64;
+                    user.storeLogoStatus = 'pending';
+                }
             }
 
             if (req.files.photo?.[0]) {
-                user.photo = `/uploads/${req.files.photo[0].filename}`;
-                user.photoStatus = 'pending';
+                const base64 = fileToBase64(req.files.photo[0]);
+                if (base64) {
+                    user.photo = base64;
+                    user.photoStatus = 'pending';
+                }
             }
         }
 

@@ -100,6 +100,11 @@ const adSchema = new mongoose.Schema({
     price: {
         type: Number
     },
+    priceType: {
+        type: String,
+        enum: ['Negotiable', 'Fixed'],
+        default: 'Negotiable'
+    },
     merchantID: {
         type: String
     },

@@ -3,6 +3,7 @@ const Category = require('../models/Category');
 const Location = require('../models/Location');
 const fs = require('fs');
 const path = require('path');
+const { fileToBase64, processImageString } = require('../utils/imageHelper');
 
 const User = require('../models/User'); // Import User model
 const PromotionPlan = require('../models/PromotionPlan'); // Import PromotionPlan model
@@ -32,7 +33,9 @@ exports.createAd = async (req, res) => {
             phone,
             hidePhone,
             url,
-            actionType
+            actionType,
+            price,
+            priceType
         } = req.body;
 
         if (!phone) {
@@ -40,7 +43,14 @@ exports.createAd = async (req, res) => {
         }
 
         // Process images
-        const imagePaths = req.files ? req.files.map(file => `/uploads/${file.filename}`) : [];
+        let imagePaths = req.files ? req.files.map(file => fileToBase64(file)) : [];
+        if (req.body.images) {
+            const imgs = Array.isArray(req.body.images) ? req.body.images : [req.body.images];
+            imgs.forEach(img => {
+                const processed = processImageString(img);
+                if (processed) imagePaths.push(processed);
+            });
+        }
 
         const newAd = new Ad({
             user: userId, // Can be null now
@@ -58,6 +68,8 @@ exports.createAd = async (req, res) => {
             actionType,
             images: imagePaths,
             adType: 'Free',
+            price,
+            priceType,
             status: 'active'
         });
 
@@ -98,7 +110,7 @@ exports.getAllAdsAdmin = async (req, res) => {
         }
 
         const ads = await Ad.find(query)
-            .populate('user', 'name email mobile') // Populate user details
+            .populate('user', 'name email mobile storeLogo storeBanner merchantType') // Populate user details
             .sort({ createdAt: -1 });
 
         res.json({
@@ -118,7 +130,7 @@ exports.getAllAdsAdmin = async (req, res) => {
 exports.getAllPromotedAdsAdmin = async (req, res) => {
     try {
         const ads = await Ad.find({ adType: 'Promoted' })
-            .populate('user', 'name email mobile')
+            .populate('user', 'name email mobile storeLogo storeBanner merchantType')
             .sort({ createdAt: -1 });
 
         res.json({
@@ -187,15 +199,14 @@ exports.deleteAdImage = async (req, res) => {
         ad.images = newImages;
         await ad.save();
 
-        // Optionally delete file from filesystem
-        // Extract filename from URL: /uploads/filename.jpg
-        const filename = imageUrl.split('/uploads/')[1];
-        if (filename) {
-            const filePath = path.join(__dirname, '../uploads', filename);
-            if (fs.existsSync(filePath)) {
-                fs.unlinkSync(filePath);
-            }
-        }
+        // Optionally delete file from filesystem - REMOVED for MongoDB storage
+        // const filename = imageUrl.split('/uploads/')[1];
+        // if (filename) {
+        //     const filePath = path.join(__dirname, '../uploads', filename);
+        //     if (fs.existsSync(filePath)) {
+        //         fs.unlinkSync(filePath);
+        //     }
+        // }
 
         res.json({
             success: true,
@@ -240,6 +251,7 @@ exports.updateAdDetails = async (req, res) => {
             note,
             targetValue,
             photoStatus,
+            priceType,
             status
         } = req.body;
 
@@ -275,12 +287,22 @@ exports.updateAdDetails = async (req, res) => {
         if (note !== undefined) ad.note = note;
         if (targetValue !== undefined) ad.targetValue = targetValue;
         if (photoStatus !== undefined) ad.photoStatus = photoStatus;
+        if (priceType !== undefined) ad.priceType = priceType;
         if (status !== undefined) ad.status = status;
 
         // Process images if uploaded
         if (req.files && req.files.length > 0) {
-            const newImagePaths = req.files.map(file => `/uploads/${file.filename}`);
+            const newImagePaths = req.files.map(file => fileToBase64(file));
             ad.images = [...ad.images, ...newImagePaths].slice(0, 5);
+        } else if (req.body.images) {
+            const imgs = Array.isArray(req.body.images) ? req.body.images : [req.body.images];
+            imgs.forEach(img => {
+                const processed = processImageString(img);
+                if (processed) {
+                    ad.images.push(processed);
+                }
+            });
+            ad.images = ad.images.slice(0, 5);
         }
 
         await ad.save();
@@ -303,7 +325,7 @@ exports.getAllAdsPublic = async (req, res) => {
     try {
         // Fetch active ads sorted by date (newest first)
         const ads = await Ad.find({ status: 'active' })
-            .populate('user', 'name storeName photo photoStatus createdAt verifiedBy')
+            .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType createdAt verifiedBy')
             .sort({ createdAt: -1 });
 
         // Increment views for these ads (Impression counting)
@@ -332,7 +354,7 @@ exports.getAllAdsPublic = async (req, res) => {
 exports.getSingleAdPublic = async (req, res) => {
     try {
         const ad = await Ad.findById(req.params.id)
-            .populate('user', 'name storeName photo photoStatus verifiedBy');
+            .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType verifiedBy');
 
         if (!ad) {
             return res.status(404).json({ success: false, message: 'Ad not found' });
@@ -395,7 +417,9 @@ exports.updateMyAd = async (req, res) => {
             hidePhone,
             additionalPhones,
             url,
-            actionType
+            actionType,
+            price,
+            priceType
         } = req.body;
 
         // Update fields
@@ -411,6 +435,8 @@ exports.updateMyAd = async (req, res) => {
         if (additionalPhones) ad.additionalPhones = additionalPhones;
         if (url !== undefined) ad.url = url;
         if (actionType) ad.actionType = actionType;
+        if (price !== undefined) ad.price = price;
+        if (priceType !== undefined) ad.priceType = priceType;
 
         await ad.save();
 
@@ -435,19 +461,7 @@ exports.deleteMyAd = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Ad not found or unauthorized' });
         }
 
-        // Remove images from filesystem
-        if (ad.images && ad.images.length > 0) {
-            ad.images.forEach(imageUrl => {
-                const filename = imageUrl.split('/uploads/')[1];
-                if (filename) {
-                    const filePath = path.join(__dirname, '../uploads', filename);
-                    if (fs.existsSync(filePath)) {
-                        fs.unlinkSync(filePath);
-                    }
-                }
-            });
-        }
-
+        // Remove images from filesystem - REMOVED for MongoDB storage
         await ad.deleteOne();
 
         res.json({
@@ -536,7 +550,14 @@ exports.createAdAdmin = async (req, res) => {
         }
 
         // Process images
-        const imagePaths = req.files ? req.files.map(file => `/uploads/${file.filename}`) : [];
+        let imagePaths = req.files ? req.files.map(file => fileToBase64(file)) : [];
+        if (req.body.images) {
+            const imgs = Array.isArray(req.body.images) ? req.body.images : [req.body.images];
+            imgs.forEach(img => {
+                const processed = processImageString(img);
+                if (processed) imagePaths.push(processed);
+            });
+        }
 
         const newAd = new Ad({
             user: targetUser ? targetUser._id : (req.admin ? req.admin.id : null),
@@ -595,19 +616,7 @@ exports.deleteAdAdmin = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Ad not found' });
         }
 
-        // Remove images from filesystem
-        if (ad.images && ad.images.length > 0) {
-            ad.images.forEach(imageUrl => {
-                const filename = imageUrl.split('/uploads/')[1];
-                if (filename) {
-                    const filePath = path.join(__dirname, '../uploads', filename);
-                    if (fs.existsSync(filePath)) {
-                        fs.unlinkSync(filePath);
-                    }
-                }
-            });
-        }
-
+        // Remove images from filesystem - REMOVED for MongoDB storage
         await ad.deleteOne();
 
         res.json({
