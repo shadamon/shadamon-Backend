@@ -1,6 +1,7 @@
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const sharp = require('sharp');
 
 // Ensure uploads directory exists
 const uploadDir = 'uploads';
@@ -8,6 +9,7 @@ if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir);
 }
 
+// Memory Storage so we can process buffer with Sharp
 const storage = multer.memoryStorage();
 
 const fileFilter = (req, file, cb) => {
@@ -23,9 +25,80 @@ const upload = multer({
     storage: storage,
     fileFilter: fileFilter,
     limits: {
-        fileSize: 5 * 1024 * 1024, // 5MB limit
+        fileSize: 10 * 1024 * 1024, // 10MB limit
         files: 5 // Max 5 files
     }
 });
 
-module.exports = upload;
+/**
+ * Middleware to process uploaded images:
+ * - Converts to WebP
+ * - Saves to disk with .webp extension
+ * - Updates req.file/req.files
+ */
+const processImages = async (req, res, next) => {
+    if (!req.file && !req.files) return next();
+
+    const processFile = async (file) => {
+        try {
+            const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+            const filename = (file.fieldname || 'file') + '-' + uniqueSuffix + '.webp';
+            const filepath = path.join('uploads', filename);
+
+            // Convert buffer to WebP and save to file
+            await sharp(file.buffer)
+                .webp({ quality: 80 })
+                .toFile(filepath);
+
+            // Update file object properties
+            file.filename = filename;
+            file.path = filepath.replace(/\\/g, '/'); // Normalize path
+            file.destination = 'uploads/';
+            file.mimetype = 'image/webp';
+            file.size = fs.statSync(filepath).size;
+
+            // Remove buffer to free memory
+            delete file.buffer;
+        } catch (error) {
+            console.error(`Error processing image ${file.originalname}:`, error);
+            throw error;
+        }
+    };
+
+    try {
+        const promises = [];
+
+        if (req.file) {
+            promises.push(processFile(req.file));
+        }
+
+        if (req.files) {
+            if (Array.isArray(req.files)) {
+                // upload.array()
+                req.files.forEach(file => promises.push(processFile(file)));
+            } else {
+                // upload.fields()
+                Object.values(req.files).forEach(filesArray => {
+                    if (Array.isArray(filesArray)) {
+                        filesArray.forEach(file => promises.push(processFile(file)));
+                    }
+                });
+            }
+        }
+
+        await Promise.all(promises);
+        next();
+    } catch (err) {
+        next(err);
+    }
+};
+
+// Wrapper object to replace direct multer instance
+const uploadWrapper = {
+    single: (field) => [upload.single(field), processImages],
+    array: (field, maxCount) => [upload.array(field, maxCount), processImages],
+    fields: (fields) => [upload.fields(fields), processImages],
+    any: () => [upload.any(), processImages]
+};
+
+module.exports = uploadWrapper;

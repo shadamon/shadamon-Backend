@@ -42,6 +42,11 @@ router.put('/:id/promote', authenticateUser, adController.promoteAd);
 // @access  Public
 router.get('/public/all', adController.getAllAdsPublic);
 
+// @route   GET api/ads/public/count
+// @desc    Get count of active ads
+// @access  Public
+router.get('/public/count', adController.getAdsCount);
+
 // @route   GET api/ads/public/promotion-plans
 // @desc    Get all promotion plans
 // @access  Public

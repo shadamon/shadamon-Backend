@@ -66,9 +66,24 @@ router.post('/otp/request', protect, requestOTP);
 // @access  Private
 router.post('/otp/verify', protect, verifyOTP);
 
+// @route   GET /api/user/profile/:id
+// @desc    Get public profile
+// @access  Public
+router.get('/profile/:id', require('../controllers/userController').getPublicProfile);
+
 // @route   GET /api/user/premium
 // @desc    Get all premium users
 // @access  Public
 router.get('/premium', require('../controllers/userController').getPremiumUsers);
+
+// @route   POST /api/user/follow/:id
+// @desc    Follow or Unfollow a user
+// @access  Private
+router.post('/follow/:id', protect, require('../controllers/userController').followUser);
+
+// @route   POST /api/user/rate/:id
+// @desc    Rate a user
+// @access  Private
+router.post('/rate/:id', protect, require('../controllers/userController').rateUser);
 
 module.exports = router;

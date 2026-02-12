@@ -65,6 +65,11 @@ const adSchema = new mongoose.Schema({
         type: String,
         enum: ['call_msg', 'traffic']
     },
+    promoteTag: {
+        type: String,
+        enum: ['All', 'Urgent', 'Discount', 'Offer', 'Highlights'],
+        default: 'All'
+    },
     targetLocations: {
         type: [String]
     },
@@ -139,8 +144,18 @@ const adSchema = new mongoose.Schema({
         type: String,
         enum: ['pending', 'approved', 'rejected'],
         default: 'pending'
+    },
+    features: {
+        type: Object, // Store as key-value pairs
+        default: {}
     }
 }, { timestamps: true });
+
+adSchema.index({ status: 1, createdAt: -1 });
+adSchema.index({ category: 1, status: 1 });
+adSchema.index({ location: 1, status: 1 });
+adSchema.index({ headline: 'text', description: 'text' });
+adSchema.index({ adType: 1, createdAt: -1 });
 
 function arrayLimit(val) {
     return val.length <= 5;

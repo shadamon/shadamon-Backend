@@ -3,7 +3,7 @@ const Category = require('../models/Category');
 const Location = require('../models/Location');
 const fs = require('fs');
 const path = require('path');
-const { fileToBase64, processImageString } = require('../utils/imageHelper');
+// Removed unused imageHelper import
 
 const User = require('../models/User'); // Import User model
 const PromotionPlan = require('../models/PromotionPlan'); // Import PromotionPlan model
@@ -35,7 +35,8 @@ exports.createAd = async (req, res) => {
             url,
             actionType,
             price,
-            priceType
+            priceType,
+            features
         } = req.body;
 
         if (!phone) {
@@ -43,14 +44,9 @@ exports.createAd = async (req, res) => {
         }
 
         // Process images
-        let imagePaths = req.files ? req.files.map(file => fileToBase64(file)) : [];
-        if (req.body.images) {
-            const imgs = Array.isArray(req.body.images) ? req.body.images : [req.body.images];
-            imgs.forEach(img => {
-                const processed = processImageString(img);
-                if (processed) imagePaths.push(processed);
-            });
-        }
+        // Process images
+        let imagePaths = req.files ? req.files.map(file => file.path.replace(/\\/g, "/")) : [];
+        // Removed base64 image processing
 
         const newAd = new Ad({
             user: userId, // Can be null now
@@ -70,6 +66,7 @@ exports.createAd = async (req, res) => {
             adType: 'Free',
             price,
             priceType,
+            features: features ? (typeof features === 'string' ? JSON.parse(features) : features) : {},
             status: 'active'
         });
 
@@ -199,14 +196,13 @@ exports.deleteAdImage = async (req, res) => {
         ad.images = newImages;
         await ad.save();
 
-        // Optionally delete file from filesystem - REMOVED for MongoDB storage
-        // const filename = imageUrl.split('/uploads/')[1];
-        // if (filename) {
-        //     const filePath = path.join(__dirname, '../uploads', filename);
-        //     if (fs.existsSync(filePath)) {
-        //         fs.unlinkSync(filePath);
-        //     }
-        // }
+        // Delete file from filesystem
+        if (imageUrl && !imageUrl.startsWith('data:') && !imageUrl.startsWith('http')) {
+            const filePath = path.join(__dirname, '..', imageUrl);
+            if (fs.existsSync(filePath)) {
+                fs.unlinkSync(filePath);
+            }
+        }
 
         res.json({
             success: true,
@@ -252,7 +248,8 @@ exports.updateAdDetails = async (req, res) => {
             targetValue,
             photoStatus,
             priceType,
-            status
+            status,
+            features
         } = req.body;
 
         const ad = await Ad.findById(req.params.id);
@@ -289,21 +286,59 @@ exports.updateAdDetails = async (req, res) => {
         if (photoStatus !== undefined) ad.photoStatus = photoStatus;
         if (priceType !== undefined) ad.priceType = priceType;
         if (status !== undefined) ad.status = status;
+        if (features !== undefined) ad.features = typeof features === 'string' ? JSON.parse(features) : features;
 
-        // Process images if uploaded
+        // Process images: Combine remaining (existing) images + new uploads
+        let currentImages = [];
+        if (req.body.remainingImages) {
+            try {
+                const remaining = typeof req.body.remainingImages === 'string'
+                    ? JSON.parse(req.body.remainingImages)
+                    : req.body.remainingImages;
+                if (Array.isArray(remaining)) {
+                    currentImages = remaining;
+                }
+            } catch (e) {
+                console.error("Error parsing remainingImages", e);
+            }
+        } else {
+            // If remainingImages is NOT provided, assume we keep all existing images?
+            // Or if this is coming from a form that always sends remainingImages, absence means empty?
+            // For safety, if not provided, keep formatted ad.images.
+            // But usually frontend sends it. Let's assume append mode if not provided, for backward compatibility.
+            currentImages = ad.images;
+        }
+
+        const oldImages = ad.images;
+        let newAdImages = [];
+
         if (req.files && req.files.length > 0) {
-            const newImagePaths = req.files.map(file => fileToBase64(file));
-            ad.images = [...ad.images, ...newImagePaths].slice(0, 5);
-        } else if (req.body.images) {
-            const imgs = Array.isArray(req.body.images) ? req.body.images : [req.body.images];
-            imgs.forEach(img => {
-                const processed = processImageString(img);
-                if (processed) {
-                    ad.images.push(processed);
+            const newImagePaths = req.files.map(file => file.path.replace(/\\/g, "/"));
+            newAdImages = [...currentImages, ...newImagePaths].slice(0, 5);
+        } else {
+            // No new files, just update with remaining images (deletion case)
+            if (req.body.remainingImages) {
+                newAdImages = currentImages.slice(0, 5);
+            } else {
+                newAdImages = ad.images;
+            }
+        }
+
+        ad.images = newAdImages;
+
+        // Delete removed images from filesystem
+        if (oldImages && oldImages.length > 0) {
+            const deletedImages = oldImages.filter(img => !newAdImages.includes(img));
+            deletedImages.forEach(img => {
+                if (img && !img.startsWith('data:') && !img.startsWith('http')) {
+                    const filePath = path.join(__dirname, '..', img);
+                    fs.unlink(filePath, (err) => {
+                        if (err && err.code !== 'ENOENT') console.error("Failed to delete old image:", err);
+                    });
                 }
             });
-            ad.images = ad.images.slice(0, 5);
         }
+
 
         await ad.save();
 
@@ -323,27 +358,107 @@ exports.updateAdDetails = async (req, res) => {
 // @access  Public
 exports.getAllAdsPublic = async (req, res) => {
     try {
-        // Fetch active ads sorted by date (newest first)
-        const ads = await Ad.find({ status: 'active' })
+        const { category, subCategory, location, subLocation, promoteTag, sort, search, limit } = req.query;
+
+        let query = { status: 'active' };
+
+        if (category) query.category = category;
+        if (subCategory) query.subCategory = subCategory;
+        if (location) query.location = location;
+        if (subLocation) query.subLocation = subLocation;
+        if (promoteTag && promoteTag !== 'All') {
+            query.promoteTag = promoteTag;
+            query.adType = 'Promoted';
+        }
+
+        if (search) {
+            const searchRegex = new RegExp(search.split(/\s+/).filter(Boolean).join('|'), 'i');
+            query.$or = [
+                { headline: searchRegex },
+                { description: searchRegex }
+            ];
+        }
+
+        let sortQuery = {};
+        if (search) {
+            // Priority to promoted ads when searching
+            sortQuery = { adType: 1, createdAt: -1 };
+        } else {
+            sortQuery = { createdAt: -1 };
+        }
+
+        if (sort === 'oldest') sortQuery = { createdAt: 1 };
+        else if (sort === 'price-high') sortQuery = { price: -1 };
+        else if (sort === 'price-low') sortQuery = { price: 1 };
+
+        // Fetch active ads
+        let adsQuery = Ad.find(query)
+            .select('headline price images location subLocation category subCategory createdAt deliveryCount user adType')
             .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType createdAt verifiedBy')
-            .sort({ createdAt: -1 });
+            .sort(sortQuery);
+
+        if (limit) {
+            adsQuery = adsQuery.limit(parseInt(limit));
+        }
+
+        const ads = await adsQuery;
+
+        // Map ads to only include the first image in the response to save bandwidth
+        const optimizedAds = ads.map(ad => {
+            const adObj = ad.toObject();
+            if (adObj.images && adObj.images.length > 0) {
+                adObj.images = [adObj.images[0]]; // Only send first image for list/suggestion view
+            }
+            return adObj;
+        });
 
         // Increment views for these ads (Impression counting)
         if (ads.length > 0) {
             const adIds = ads.map(ad => ad._id);
-            await Ad.updateMany(
+            // Non-blocking update (don't await)
+            Ad.updateMany(
                 { _id: { $in: adIds } },
                 { $inc: { deliveryCount: 1 } }
-            );
+            ).catch(err => console.error("Error updating delivery counts:", err));
         }
 
         res.json({
             success: true,
-            count: ads.length,
-            data: ads
+            count: optimizedAds.length,
+            data: optimizedAds
         });
     } catch (err) {
         console.error("Error fetching public ads:", err.message);
+        res.status(500).json({ success: false, message: 'Server Error' });
+    }
+};
+
+// @route   GET api/ads/public/count
+// @desc    Get count of active ads based on filters
+// @access  Public
+exports.getAdsCount = async (req, res) => {
+    try {
+        const { category, subCategory, location, subLocation, promoteTag } = req.query;
+
+        let query = { status: 'active' };
+
+        if (category) query.category = category;
+        if (subCategory) query.subCategory = subCategory;
+        if (location) query.location = location;
+        if (subLocation) query.subLocation = subLocation;
+        if (promoteTag && promoteTag !== 'All') {
+            query.promoteTag = promoteTag;
+            query.adType = 'Promoted';
+        }
+
+        const count = await Ad.countDocuments(query);
+
+        res.json({
+            success: true,
+            count: count
+        });
+    } catch (err) {
+        console.error("Error fetching ad count:", err.message);
         res.status(500).json({ success: false, message: 'Server Error' });
     }
 };
@@ -419,7 +534,8 @@ exports.updateMyAd = async (req, res) => {
             url,
             actionType,
             price,
-            priceType
+            priceType,
+            features
         } = req.body;
 
         // Update fields
@@ -437,6 +553,7 @@ exports.updateMyAd = async (req, res) => {
         if (actionType) ad.actionType = actionType;
         if (price !== undefined) ad.price = price;
         if (priceType !== undefined) ad.priceType = priceType;
+        if (features !== undefined) ad.features = typeof features === 'string' ? JSON.parse(features) : features;
 
         await ad.save();
 
@@ -461,7 +578,17 @@ exports.deleteMyAd = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Ad not found or unauthorized' });
         }
 
-        // Remove images from filesystem - REMOVED for MongoDB storage
+        // Remove images from filesystem
+        if (ad.images && ad.images.length > 0) {
+            ad.images.forEach(img => {
+                if (img && !img.startsWith('data:') && !img.startsWith('http')) {
+                    const filePath = path.join(__dirname, '..', img);
+                    fs.unlink(filePath, (err) => {
+                        if (err && err.code !== 'ENOENT') console.error("Failed to delete image:", err);
+                    });
+                }
+            });
+        }
         await ad.deleteOne();
 
         res.json({
@@ -537,7 +664,8 @@ exports.createAdAdmin = async (req, res) => {
             price,
             merchantID,
             showTill,
-            note
+            note,
+            features
         } = req.body;
 
         // Find user by mobile or use a default admin user ID if provided
@@ -550,14 +678,9 @@ exports.createAdAdmin = async (req, res) => {
         }
 
         // Process images
-        let imagePaths = req.files ? req.files.map(file => fileToBase64(file)) : [];
-        if (req.body.images) {
-            const imgs = Array.isArray(req.body.images) ? req.body.images : [req.body.images];
-            imgs.forEach(img => {
-                const processed = processImageString(img);
-                if (processed) imagePaths.push(processed);
-            });
-        }
+        // Process images
+        let imagePaths = req.files ? req.files.map(file => file.path.replace(/\\/g, "/")) : [];
+        // Removed base64 image processing
 
         const newAd = new Ad({
             user: targetUser ? targetUser._id : (req.admin ? req.admin.id : null),
@@ -578,6 +701,7 @@ exports.createAdAdmin = async (req, res) => {
             merchantID,
             showTill,
             note,
+            features: features ? (typeof features === 'string' ? JSON.parse(features) : features) : {},
             status: req.body.status || 'active'
         });
 
@@ -616,7 +740,17 @@ exports.deleteAdAdmin = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Ad not found' });
         }
 
-        // Remove images from filesystem - REMOVED for MongoDB storage
+        // Remove images from filesystem
+        if (ad.images && ad.images.length > 0) {
+            ad.images.forEach(img => {
+                if (img && !img.startsWith('data:') && !img.startsWith('http')) {
+                    const filePath = path.join(__dirname, '..', img);
+                    fs.unlink(filePath, (err) => {
+                        if (err && err.code !== 'ENOENT') console.error("Failed to delete image:", err);
+                    });
+                }
+            });
+        }
         await ad.deleteOne();
 
         res.json({

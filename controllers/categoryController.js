@@ -19,7 +19,7 @@ exports.createCategory = async (req, res) => {
                 adminId: req.admin.id,
                 adminName: req.admin.name || 'Admin'
             },
-            icon: req.file ? fileToBase64(req.file) : processImageString(req.body.icon)
+            icon: req.file ? req.file.path.replace(/\\/g, "/") : null
         });
 
         await category.save();
@@ -40,10 +40,7 @@ exports.updateCategory = async (req, res) => {
         };
         if (name) updateData.slug = name.toLowerCase().replace(/ /g, '-');
         if (req.file) {
-            updateData.icon = fileToBase64(req.file);
-        } else if (req.body.icon) {
-            const processed = processImageString(req.body.icon);
-            if (processed) updateData.icon = processed;
+            updateData.icon = req.file.path.replace(/\\/g, "/");
         }
 
         const category = await Category.findByIdAndUpdate(req.params.id, updateData, { new: true });
@@ -102,7 +99,7 @@ exports.createSubCategory = async (req, res) => {
                 priceBoxShow: priceBoxShow === 'true' || priceBoxShow === true,
                 priceBoxName: priceBoxName,
                 tags: tags || [],
-                image: req.file ? fileToBase64(req.file) : processImageString(req.body.image),
+                image: req.file ? req.file.path.replace(/\\/g, "/") : null,
                 createdBy: {
                     adminId: req.admin.id,
                     adminName: req.admin.name || 'Admin'
@@ -145,10 +142,7 @@ exports.updateSubCategory = async (req, res) => {
             tags: tags || []
         };
         if (req.file) {
-            updateData.image = fileToBase64(req.file);
-        } else if (req.body.image) {
-            const processed = processImageString(req.body.image);
-            if (processed) updateData.image = processed;
+            updateData.image = req.file.path.replace(/\\/g, "/");
         }
 
         const subCategory = await SubCategory.findByIdAndUpdate(req.params.id, updateData, { new: true });

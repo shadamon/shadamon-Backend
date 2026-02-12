@@ -100,6 +100,11 @@ const UserSchema = new mongoose.Schema({
         ref: 'User',
         default: []
     }],
+    followers: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        default: []
+    }],
     favorites: [{
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Ad',
@@ -108,6 +113,14 @@ const UserSchema = new mongoose.Schema({
     notifyCategories: {
         type: [String],
         default: []
+    },
+    ratings: [{
+        user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+        stars: { type: Number, required: true, min: 1, max: 5 }
+    }],
+    rating: {
+        type: Number,
+        default: 0
     }
 });
 

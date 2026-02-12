@@ -17,7 +17,7 @@ exports.createLocation = async (req, res) => {
                 adminId: req.admin.id,
                 adminName: req.admin.name || 'Admin'
             },
-            image: req.file ? fileToBase64(req.file) : processImageString(req.body.image)
+            image: req.file ? req.file.path.replace(/\\/g, "/") : null
         });
 
         await location.save();
@@ -37,10 +37,7 @@ exports.updateLocation = async (req, res) => {
         };
         if (name) updateData.slug = name.toLowerCase().replace(/ /g, '-');
         if (req.file) {
-            updateData.image = fileToBase64(req.file);
-        } else if (req.body.image) {
-            const processed = processImageString(req.body.image);
-            if (processed) updateData.image = processed;
+            updateData.image = req.file.path.replace(/\\/g, "/");
         }
 
         const location = await Location.findByIdAndUpdate(req.params.id, updateData, { new: true });
@@ -86,7 +83,7 @@ exports.createSubLocation = async (req, res) => {
                 mapLink,
                 order,
                 status: status === 'true' || status === true,
-                image: req.file ? fileToBase64(req.file) : processImageString(req.body.image),
+                image: req.file ? req.file.path.replace(/\\/g, "/") : null,
                 createdBy: {
                     adminId: req.admin.id,
                     adminName: req.admin.name || 'Admin'
@@ -115,10 +112,7 @@ exports.updateSubLocation = async (req, res) => {
             status: status === 'true' || status === true
         };
         if (req.file) {
-            updateData.image = fileToBase64(req.file);
-        } else if (req.body.image) {
-            const processed = processImageString(req.body.image);
-            if (processed) updateData.image = processed;
+            updateData.image = req.file.path.replace(/\\/g, "/");
         }
 
         const subLocation = await SubLocation.findByIdAndUpdate(req.params.id, updateData, { new: true });

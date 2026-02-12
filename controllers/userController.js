@@ -185,25 +185,25 @@ const updateProfile = async (req, res) => {
         // 2. Handle File Uploads (mapped from req.files)
         if (req.files) {
             if (req.files.storeBanner?.[0]) {
-                const base64 = fileToBase64(req.files.storeBanner[0]);
-                if (base64) {
-                    user.storeBanner = base64;
+                const filePath = req.files.storeBanner[0].path.replace(/\\/g, "/");
+                if (filePath) {
+                    user.storeBanner = filePath;
                     user.storeBannerStatus = 'pending';
                 }
             }
 
             if (req.files.storeLogo?.[0]) {
-                const base64 = fileToBase64(req.files.storeLogo[0]);
-                if (base64) {
-                    user.storeLogo = base64;
+                const filePath = req.files.storeLogo[0].path.replace(/\\/g, "/");
+                if (filePath) {
+                    user.storeLogo = filePath;
                     user.storeLogoStatus = 'pending';
                 }
             }
 
             if (req.files.photo?.[0]) {
-                const base64 = fileToBase64(req.files.photo[0]);
-                if (base64) {
-                    user.photo = base64;
+                const filePath = req.files.photo[0].path.replace(/\\/g, "/");
+                if (filePath) {
+                    user.photo = filePath;
                     user.photoStatus = 'pending';
                 }
             }
@@ -535,6 +535,100 @@ const checkMobile = async (req, res) => {
     }
 };
 
+const followUser = async (req, res) => {
+    try {
+        if (req.params.id === req.user.id) {
+            return res.status(400).json({ message: "You cannot follow yourself" });
+        }
+
+        const targetUser = await User.findById(req.params.id);
+        const currentUser = await User.findById(req.user.id);
+
+        if (!targetUser || !currentUser) {
+            return res.status(404).json({ message: "User not found" });
+        }
+
+        // Check if already following
+        if (!currentUser.following.includes(req.params.id)) {
+            // Follow
+            await currentUser.updateOne({ $push: { following: req.params.id } });
+            await targetUser.updateOne({ $push: { followers: req.user.id } });
+            res.status(200).json({ message: "User followed", isFollowing: true });
+        } else {
+            // Unfollow
+            await currentUser.updateOne({ $pull: { following: req.params.id } });
+            await targetUser.updateOne({ $pull: { followers: req.user.id } });
+            res.status(200).json({ message: "User unfollowed", isFollowing: false });
+        }
+    } catch (err) {
+        console.error('Error following user:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+// @desc    Get public user profile by ID
+// @route   GET /api/user/profile/:id
+// @access  Public
+const getPublicProfile = async (req, res) => {
+    try {
+        const user = await User.findById(req.params.id).select('-password -accountStatus');
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+        res.json(user);
+    } catch (err) {
+        console.error('Error fetching public profile:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+const rateUser = async (req, res) => {
+    try {
+        if (!req.params.id) {
+            return res.status(400).json({ message: "User ID is required" });
+        }
+        if (req.params.id === req.user.id) {
+            return res.status(400).json({ message: "You cannot rate yourself" });
+        }
+
+        const { stars } = req.body;
+        if (!stars || stars < 1 || stars > 5) {
+            return res.status(400).json({ message: "Invalid rating. Must be between 1 and 5 stars" });
+        }
+
+        const user = await User.findById(req.params.id);
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
+
+        // Check if user already rated
+        const existingRatingIndex = user.ratings.findIndex(r => r.user.toString() === req.user.id);
+
+        if (existingRatingIndex !== -1) {
+            // Update existing rating
+            user.ratings[existingRatingIndex].stars = stars;
+        } else {
+            // Add new rating
+            user.ratings.push({ user: req.user.id, stars });
+        }
+
+        // Calculate average rating
+        const totalStars = user.ratings.reduce((acc, curr) => acc + curr.stars, 0);
+        user.rating = Math.round(totalStars / user.ratings.length);
+
+        await user.save();
+
+        res.json({
+            message: "Rating submitted successfully",
+            rating: user.rating,
+            count: user.ratings.length
+        });
+    } catch (err) {
+        console.error('Rate user error:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
 module.exports = {
     registerUser,
     loginUser,
@@ -542,8 +636,11 @@ module.exports = {
     updateProfile,
     facebookLogin,
     googleLogin,
+    rateUser,
+    getPublicProfile,
     getPremiumUsers,
     getUserActivity,
     updateNotifySettings,
-    checkMobile
+    checkMobile,
+    followUser
 };
