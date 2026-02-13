@@ -102,6 +102,22 @@ const adSchema = new mongoose.Schema({
         type: Number,
         default: 0
     },
+    dailyDeliveryCount: {
+        type: Number,
+        default: 0
+    },
+    lastDeliveryDate: {
+        type: Date,
+        default: Date.now
+    },
+    dailyViewsCount: {
+        type: Number,
+        default: 0
+    },
+    lastViewsDate: {
+        type: Date,
+        default: Date.now
+    },
     price: {
         type: Number
     },
@@ -148,6 +164,14 @@ const adSchema = new mongoose.Schema({
     features: {
         type: Object, // Store as key-value pairs
         default: {}
+    },
+    userUpdated: {
+        type: Boolean,
+        default: false
+    },
+    userNewPhotos: {
+        type: Boolean,
+        default: false
     }
 }, { timestamps: true });
 

@@ -22,7 +22,7 @@ const loginAdmin = async (req, res) => {
         }
 
         const token = jwt.sign(
-            { id: admin._id, role: admin.role, email: admin.email },
+            { id: admin._id, role: admin.role, email: admin.email, staffName: admin.staffName || admin.email.split('@')[0] },
             process.env.JWT_SECRET,
             { expiresIn: '1d' }
         );

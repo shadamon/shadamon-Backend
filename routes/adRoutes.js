@@ -22,7 +22,7 @@ router.get('/me', authenticateUser, adController.getMyAds);
 // @route   PUT api/ads/:id
 // @desc    Update user's own ad
 // @access  Private
-router.put('/:id', authenticateUser, adController.updateMyAd);
+router.put('/:id', authenticateUser, upload.array('images', 5), adController.updateMyAd);
 
 // @route   DELETE api/ads/:id
 // @desc    Delete user's own ad
@@ -76,6 +76,11 @@ router.put('/admin/:id/status', verifyToken, adController.updateAdStatus);
 // @desc    Update ad details by admin
 // @access  Private (Admin)
 router.put('/admin/:id/update', verifyToken, upload.array('images', 5), adController.updateAdDetails);
+
+// @route   PUT api/ads/admin/:id/see
+// @desc    Mark ad as seen by admin
+// @access  Private (Admin)
+router.put('/admin/:id/see', verifyToken, adController.markAdAsSeen);
 
 // @route   DELETE api/ads/admin/:id/image
 // @desc    Remove specific image from ad

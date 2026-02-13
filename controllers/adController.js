@@ -106,6 +106,19 @@ exports.getAllAdsAdmin = async (req, res) => {
             query.adType = adType;
         }
 
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        // Reset ads that haven't been seen today for both delivery and views
+        await Ad.updateMany(
+            { lastDeliveryDate: { $lt: today } },
+            { $set: { dailyDeliveryCount: 0, lastDeliveryDate: today } }
+        );
+        await Ad.updateMany(
+            { lastViewsDate: { $lt: today } },
+            { $set: { dailyViewsCount: 0, lastViewsDate: today } }
+        );
+
         const ads = await Ad.find(query)
             .populate('user', 'name email mobile storeLogo storeBanner merchantType') // Populate user details
             .sort({ createdAt: -1 });
@@ -154,7 +167,7 @@ exports.updateAdStatus = async (req, res) => {
 
         const ad = await Ad.findByIdAndUpdate(
             req.params.id,
-            { status },
+            { status, userUpdated: false, userNewPhotos: false },
             { new: true }
         );
 
@@ -271,7 +284,13 @@ exports.updateAdDetails = async (req, res) => {
         if (url !== undefined) ad.url = url;
         if (actionType) ad.actionType = actionType;
         if (adType) ad.adType = adType;
-        if (price !== undefined) ad.price = price;
+        if (price !== undefined) {
+            if (price === 'null' || price === null || price === '') {
+                ad.price = undefined;
+            } else {
+                ad.price = Number(price);
+            }
+        }
         if (merchantID !== undefined) ad.merchantID = merchantID;
         if (pwrTarget !== undefined) ad.pwrTarget = typeof pwrTarget === 'string' ? JSON.parse(pwrTarget) : pwrTarget;
         if (targetD !== undefined) ad.targetD = targetD;
@@ -280,7 +299,14 @@ exports.updateAdDetails = async (req, res) => {
         if (rep !== undefined) ad.rep = rep;
         if (lgs !== undefined) ad.lgs = lgs;
         if (senBy !== undefined) ad.senBy = senBy;
-        if (edBy !== undefined) ad.edBy = edBy;
+
+        // Auto-set edBy if admin is editing
+        if (edBy !== undefined) {
+            ad.edBy = edBy;
+        } else {
+            const adminName = req.admin.staffName || req.admin.email?.split('@')[0] || 'Admin';
+            ad.edBy = adminName;
+        }
         if (note !== undefined) ad.note = note;
         if (targetValue !== undefined) ad.targetValue = targetValue;
         if (photoStatus !== undefined) ad.photoStatus = photoStatus;
@@ -339,6 +365,8 @@ exports.updateAdDetails = async (req, res) => {
             });
         }
 
+        ad.userUpdated = false;
+        ad.userNewPhotos = false;
 
         await ad.save();
 
@@ -415,10 +443,28 @@ exports.getAllAdsPublic = async (req, res) => {
         // Increment views for these ads (Impression counting)
         if (ads.length > 0) {
             const adIds = ads.map(ad => ad._id);
-            // Non-blocking update (don't await)
-            Ad.updateMany(
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+
+            // Using find and bulk write or a more complex update might be needed for per-ad date checks
+            // But for simplicity and performance in a list view, we can use a conditional update 
+            // However, $cond in updateMany is tricky. Let's use a simpler approach:
+            // Reset dailyDeliveryCount for ads whose lastDeliveryDate is before today.
+
+            // 1. Reset ads that haven't been seen today
+            await Ad.updateMany(
+                { _id: { $in: adIds }, lastDeliveryDate: { $lt: today } },
+                { $set: { dailyDeliveryCount: 0, lastDeliveryDate: new Date() } }
+            );
+            await Ad.updateMany(
+                { _id: { $in: adIds }, lastViewsDate: { $lt: today } },
+                { $set: { dailyViewsCount: 0, lastViewsDate: new Date() } }
+            );
+
+            // 2. Increment both total and daily counts
+            await Ad.updateMany(
                 { _id: { $in: adIds } },
-                { $inc: { deliveryCount: 1 } }
+                { $inc: { deliveryCount: 1, dailyDeliveryCount: 1 }, $set: { lastDeliveryDate: new Date() } }
             ).catch(err => console.error("Error updating delivery counts:", err));
         }
 
@@ -476,7 +522,18 @@ exports.getSingleAdPublic = async (req, res) => {
         }
 
         // Increment view 
-        await Ad.findByIdAndUpdate(req.params.id, { $inc: { views: 1 } });
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const adForViews = await Ad.findById(req.params.id);
+        if (adForViews) {
+            let update = { $inc: { views: 1, dailyViewsCount: 1 }, $set: { lastViewsDate: new Date() } };
+            if (!adForViews.lastViewsDate || adForViews.lastViewsDate < today) {
+                update.$set.dailyViewsCount = 1;
+                delete update.$inc.dailyViewsCount;
+            }
+            await Ad.findByIdAndUpdate(req.params.id, update);
+        }
 
         // Return ad with updated view count locally? No need, just return data.
         // Or if user wants to see updated view count immediately:
@@ -538,22 +595,69 @@ exports.updateMyAd = async (req, res) => {
             features
         } = req.body;
 
-        // Update fields
-        if (headline) ad.headline = headline;
-        if (description) ad.description = description;
-        if (category) ad.category = category;
-        if (subCategory !== undefined) ad.subCategory = subCategory;
-        if (location) ad.location = location;
-        if (subLocation !== undefined) ad.subLocation = subLocation;
-        if (phone) ad.phone = phone;
-        if (phoneTypes) ad.phoneTypes = phoneTypes;
-        if (hidePhone !== undefined) ad.hidePhone = hidePhone;
-        if (additionalPhones) ad.additionalPhones = additionalPhones;
-        if (url !== undefined) ad.url = url;
-        if (actionType) ad.actionType = actionType;
-        if (price !== undefined) ad.price = price;
-        if (priceType !== undefined) ad.priceType = priceType;
-        if (features !== undefined) ad.features = typeof features === 'string' ? JSON.parse(features) : features;
+        let isDetailsModified = false;
+        let isPhotosModified = false;
+
+        // Check for details modification
+        if (headline && headline !== ad.headline) { ad.headline = headline; isDetailsModified = true; }
+        if (description && description !== ad.description) { ad.description = description; isDetailsModified = true; }
+        if (category && category !== ad.category) { ad.category = category; isDetailsModified = true; }
+        if (subCategory !== undefined && subCategory !== ad.subCategory) { ad.subCategory = subCategory; isDetailsModified = true; }
+        if (location && location !== ad.location) { ad.location = location; isDetailsModified = true; }
+        if (subLocation !== undefined && subLocation !== ad.subLocation) { ad.subLocation = subLocation; isDetailsModified = true; }
+        if (phone && phone !== ad.phone) { ad.phone = phone; isDetailsModified = true; }
+        if (phoneTypes) { ad.phoneTypes = typeof phoneTypes === 'string' ? JSON.parse(phoneTypes) : phoneTypes; isDetailsModified = true; }
+        if (hidePhone !== undefined) { ad.hidePhone = hidePhone === 'true' || hidePhone === true; isDetailsModified = true; }
+        if (additionalPhones) { ad.additionalPhones = typeof additionalPhones === 'string' ? JSON.parse(additionalPhones) : additionalPhones; isDetailsModified = true; }
+        if (url !== undefined && url !== ad.url) { ad.url = url; isDetailsModified = true; }
+        if (actionType && actionType !== ad.actionType) { ad.actionType = actionType; isDetailsModified = true; }
+        if (price !== undefined && price !== ad.price) { ad.price = price; isDetailsModified = true; }
+        if (priceType !== undefined && priceType !== ad.priceType) { ad.priceType = priceType; isDetailsModified = true; }
+        if (features !== undefined) { ad.features = typeof features === 'string' ? JSON.parse(features) : features; isDetailsModified = true; }
+
+        // Process images
+        let currentImages = [];
+        if (req.body.remainingImages) {
+            try {
+                currentImages = typeof req.body.remainingImages === 'string'
+                    ? JSON.parse(req.body.remainingImages)
+                    : req.body.remainingImages;
+            } catch (e) {
+                console.error("Error parsing remainingImages", e);
+                currentImages = ad.images;
+            }
+        } else {
+            currentImages = ad.images;
+        }
+
+        const oldImages = ad.images;
+        let newAdImages = [...currentImages];
+
+        if (req.files && req.files.length > 0) {
+            const newImagePaths = req.files.map(file => file.path.replace(/\\/g, "/"));
+            newAdImages = [...currentImages, ...newImagePaths].slice(0, 5);
+            isPhotosModified = true;
+        } else if (req.body.remainingImages && currentImages.length !== oldImages.length) {
+            // Only images removed
+            newAdImages = currentImages.slice(0, 5);
+        }
+
+        ad.images = newAdImages;
+
+        // Set flags for Admin if modified by User
+        if (isDetailsModified) ad.userUpdated = true;
+        if (isPhotosModified) ad.userNewPhotos = true;
+
+        // Delete removed images from filesystem
+        const deletedImages = oldImages.filter(img => !newAdImages.includes(img));
+        deletedImages.forEach(img => {
+            if (img && !img.startsWith('data:') && !img.startsWith('http')) {
+                const filePath = path.join(__dirname, '..', img);
+                fs.unlink(filePath, (err) => {
+                    if (err && err.code !== 'ENOENT') console.error("Failed to delete image:", err);
+                });
+            }
+        });
 
         await ad.save();
 
@@ -775,6 +879,37 @@ exports.getAllPromotionPlansPublic = async (req, res) => {
         });
     } catch (err) {
         console.error("Error fetching promotion plans:", err.message);
+        res.status(500).json({ success: false, message: 'Server Error' });
+    }
+};
+
+// @route   PUT api/ads/admin/:id/see
+// @desc    Mark ad as seen by admin
+// @access  Private (Admin)
+exports.markAdAsSeen = async (req, res) => {
+    try {
+        const ad = await Ad.findById(req.params.id);
+        if (!ad) {
+            return res.status(404).json({ success: false, message: 'Ad not found' });
+        }
+
+        const adminName = req.admin.staffName || req.admin.email?.split('@')[0] || 'Admin';
+
+        // Only update if not already edited OR if we want to track who last viewed it
+        // User said: yellow means only views the edit but not made any edit.
+        // So if already edited (green), maybe we don't need to overwrite senBy for yellow?
+        // But let's just set it if req.admin.staffName exists.
+        if (!ad.edBy) {
+            ad.senBy = adminName;
+            await ad.save();
+        }
+
+        res.json({
+            success: true,
+            data: ad
+        });
+    } catch (err) {
+        console.error("Error marking ad as seen:", err.message);
         res.status(500).json({ success: false, message: 'Server Error' });
     }
 };
