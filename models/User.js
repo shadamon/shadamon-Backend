@@ -33,9 +33,9 @@ const UserSchema = new mongoose.Schema({
         type: String
     },
     actionType: {
-        type: String,
-        enum: ['call', 'chat', 'both'],
-        default: 'call'
+        type: [String],
+        enum: ['call', 'chat', 'sendcv'],
+        default: ['call']
     },
     accountStatus: {
         type: String,
@@ -59,6 +59,11 @@ const UserSchema = new mongoose.Schema({
         type: String,
         enum: ['Free', 'Premium', 'Free Saller'],
         default: 'Free'
+    },
+    merchantTrustStatus: {
+        type: String,
+        enum: ['Trusted', 'Untrusted'],
+        default: 'Untrusted'
     },
     // Extended Profile Fields
     education: { type: String },
@@ -121,7 +126,18 @@ const UserSchema = new mongoose.Schema({
     rating: {
         type: Number,
         default: 0
-    }
+    },
+    blockedUsers: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        default: []
+    }],
+    notifyPreferences: [{
+        subCategory: String,
+        location: String,
+        ad: { type: mongoose.Schema.Types.ObjectId, ref: 'Ad' },
+        createdAt: { type: Date, default: Date.now }
+    }]
 });
 
 // Hash password before saving

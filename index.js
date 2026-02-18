@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const connectDB = require('./config/database');
+const cors = require('cors');
 
 // Import routes
 const userRoutes = require('./routes/userRoutes');
@@ -25,22 +26,53 @@ process.on('unhandledRejection', (reason, promise) => {
 
 // Initialize Express app
 const app = express();
+app.use(cors());
+const server = require('http').createServer(app);
+const io = new (require('socket.io').Server)(server, {
+    cors: {
+        origin: "*",
+        methods: ["GET", "POST"]
+    }
+});
+
 const PORT = process.env.PORT || 5000;
 
-// CORS middleware
-app.use((req, res, next) => {
-    const origin = req.headers.origin;
-    if (origin) {
-        res.setHeader('Access-Control-Allow-Origin', origin);
-    }
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-auth-token, Accept');
+// Socket.io logic
+io.on('connection', (socket) => {
+    socket.on('setup', (userData) => {
+        if (userData && userData.id) {
+            socket.join(userData.id);
+            console.log(`Socket: User ${userData.id} set up personal room`);
+            socket.emit('connected');
+        }
+    });
 
-    if (req.method === 'OPTIONS') {
-        return res.status(200).end();
-    }
-    next();
+    socket.on('join chat', (room) => {
+        socket.join(room);
+    });
+
+    socket.on('new message', (newMessageReceived) => {
+        const receiverId = newMessageReceived.receiver;
+        if (!receiverId) return;
+
+        console.log(`Socket: New message from ${newMessageReceived.sender} to ${receiverId}`);
+
+        // Emit to the receiver's personal room
+        socket.to(receiverId).emit('message received', newMessageReceived);
+    });
+
+    socket.on('typing', (room) => {
+        console.log(`Socket: User typing in room ${room}`);
+        socket.to(room).emit('typing');
+    });
+
+    socket.on('stop typing', (room) => {
+        socket.to(room).emit('stop typing');
+    });
+
+    socket.on('message seen', ({ adId, senderId, receiverId }) => {
+        socket.to(senderId).emit('seen updated', { adId, receiverId });
+    });
 });
 
 // Body parser middleware
@@ -53,6 +85,9 @@ app.use((req, res, next) => {
     console.log(`📥 ${req.method} ${req.path}`);
     next();
 });
+
+// Import new routes
+const messageRoutes = require('./routes/messageRoutes');
 
 // Health check route
 app.get('/', (req, res) => {
@@ -71,6 +106,7 @@ app.use('/api/ads', adRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/locations', locationRoutes);
 app.use('/api/premier-opportunity', premierOpportunityRoutes);
+app.use('/api/messages', messageRoutes);
 
 // 404 handler
 app.use((req, res) => {
@@ -85,18 +121,10 @@ const startServer = async () => {
         // Connect to MongoDB
         await connectDB();
 
-        // Start Express server
-        app.listen(PORT, () => {
+        // Start Server
+        server.listen(PORT, () => {
             console.log(`\n🚀 Server running on port ${PORT}`);
-            console.log(`\n📍 Available routes:`);
-            console.log(`   GET  /                        - Health check`);
-            console.log(`   POST /api/user/register       - User Registration`);
-            console.log(`   POST /api/user/login          - User Login`);
-            console.log(`   POST /api/auth/login          - Admin Login`);
-            console.log(`   GET  /api/admins              - Get all admins (Protected)`);
-            console.log(`   POST /api/admins              - Create admin (Super Admin)`);
-            console.log(`   PUT  /api/admins/:id          - Update admin (Super Admin)`);
-            console.log(`   DELETE /api/admins/:id        - Delete admin (Super Admin)`);
+            console.log(`\n✨ Socket.io initialized`);
             console.log(`\n✨ Ready to accept requests!\n`);
         });
     } catch (err) {

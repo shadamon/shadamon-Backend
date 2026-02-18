@@ -167,7 +167,8 @@ const addUser = async (req, res) => {
     const {
         name, email, password, dob, gender, mobile,
         storeName, actionType, accountStatus, verifiedBy,
-        location, category, pageName, merchantType
+        location, category, pageName, merchantType,
+        merchantVerifiedBy, merchantTrustStatus
     } = req.body;
 
     try {
@@ -180,10 +181,15 @@ const addUser = async (req, res) => {
             name, email, password, dob, gender, mobile,
             storeName, actionType, accountStatus, verifiedBy,
             location, category, pageName, merchantType,
+            merchantVerifiedBy: merchantVerifiedBy || 'Mobile',
+            merchantTrustStatus: merchantTrustStatus || 'Untrusted',
 
             photo: req.files?.photo ? fileToBase64(req.files.photo[0]) : processImageString(req.body.photo),
+            photoStatus: (req.files?.photo || req.body.photo) ? 'approved' : 'pending',
             storeLogo: req.files?.storeLogo ? fileToBase64(req.files.storeLogo[0]) : processImageString(req.body.storeLogo),
-            storeBanner: req.files?.storeBanner ? fileToBase64(req.files.storeBanner[0]) : processImageString(req.body.storeBanner)
+            storeLogoStatus: (req.files?.storeLogo || req.body.storeLogo) ? 'approved' : 'pending',
+            storeBanner: req.files?.storeBanner ? fileToBase64(req.files.storeBanner[0]) : processImageString(req.body.storeBanner),
+            storeBannerStatus: (req.files?.storeBanner || req.body.storeBanner) ? 'approved' : 'pending'
         });
 
         await newUser.save();
@@ -205,7 +211,8 @@ const updateUser = async (req, res) => {
         name, email, dob, gender, mobile,
         storeName, actionType, accountStatus, verifiedBy,
         location, category, pageName, merchantType, password,
-        storeLogoStatus, storeBannerStatus, photoStatus
+        storeLogoStatus, storeBannerStatus, photoStatus,
+        merchantVerifiedBy, merchantTrustStatus
     } = req.body;
 
     try {
@@ -227,6 +234,8 @@ const updateUser = async (req, res) => {
         if (location) user.location = location;
         if (category) user.category = category;
         if (pageName) user.pageName = pageName;
+        if (merchantVerifiedBy) user.merchantVerifiedBy = merchantVerifiedBy;
+        if (merchantTrustStatus) user.merchantTrustStatus = merchantTrustStatus;
 
         if (merchantType) user.merchantType = merchantType;
         if (storeLogoStatus) user.storeLogoStatus = storeLogoStatus;
@@ -236,23 +245,35 @@ const updateUser = async (req, res) => {
         // Process images
         if (req.files?.photo) {
             user.photo = fileToBase64(req.files.photo[0]);
-        } else if (req.body.photo) {
+            user.photoStatus = 'approved'; // Admin upload is auto-approved
+        } else if (req.body.photo && req.body.photo.startsWith('data:image')) {
             const processed = processImageString(req.body.photo);
-            if (processed) user.photo = processed;
+            if (processed) {
+                user.photo = processed;
+                user.photoStatus = 'approved';
+            }
         }
 
         if (req.files?.storeLogo) {
             user.storeLogo = fileToBase64(req.files.storeLogo[0]);
-        } else if (req.body.storeLogo) {
+            user.storeLogoStatus = 'approved';
+        } else if (req.body.storeLogo && req.body.storeLogo.startsWith('data:image')) {
             const processed = processImageString(req.body.storeLogo);
-            if (processed) user.storeLogo = processed;
+            if (processed) {
+                user.storeLogo = processed;
+                user.storeLogoStatus = 'approved';
+            }
         }
 
         if (req.files?.storeBanner) {
             user.storeBanner = fileToBase64(req.files.storeBanner[0]);
-        } else if (req.body.storeBanner) {
+            user.storeBannerStatus = 'approved';
+        } else if (req.body.storeBanner && req.body.storeBanner.startsWith('data:image')) {
             const processed = processImageString(req.body.storeBanner);
-            if (processed) user.storeBanner = processed;
+            if (processed) {
+                user.storeBanner = processed;
+                user.storeBannerStatus = 'approved';
+            }
         }
 
         // If password is provided, it will be hashed by the pre-save hook

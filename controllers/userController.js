@@ -187,24 +187,36 @@ const updateProfile = async (req, res) => {
             if (req.files.storeBanner?.[0]) {
                 const filePath = req.files.storeBanner[0].path.replace(/\\/g, "/");
                 if (filePath) {
+                    if (!user.storeBanner) {
+                        user.storeBannerStatus = 'approved';
+                    } else {
+                        user.storeBannerStatus = 'pending';
+                    }
                     user.storeBanner = filePath;
-                    user.storeBannerStatus = 'pending';
                 }
             }
 
             if (req.files.storeLogo?.[0]) {
                 const filePath = req.files.storeLogo[0].path.replace(/\\/g, "/");
                 if (filePath) {
+                    if (!user.storeLogo) {
+                        user.storeLogoStatus = 'approved';
+                    } else {
+                        user.storeLogoStatus = 'pending';
+                    }
                     user.storeLogo = filePath;
-                    user.storeLogoStatus = 'pending';
                 }
             }
 
             if (req.files.photo?.[0]) {
                 const filePath = req.files.photo[0].path.replace(/\\/g, "/");
                 if (filePath) {
+                    if (!user.photo) {
+                        user.photoStatus = 'approved';
+                    } else {
+                        user.photoStatus = 'pending';
+                    }
                     user.photo = filePath;
-                    user.photoStatus = 'pending';
                 }
             }
         }
@@ -486,6 +498,10 @@ const getUserActivity = async (req, res) => {
                 path: 'favorites',
                 select: 'headline price images user',
                 populate: { path: 'user', select: 'name storeName' }
+            })
+            .populate({
+                path: 'notifyPreferences.ad',
+                select: 'headline price images user'
             });
 
         if (!user) {
@@ -498,6 +514,7 @@ const getUserActivity = async (req, res) => {
             following: user.following,
             favorites: user.favorites,
             notifyCategories: user.notifyCategories,
+            notifyPreferences: user.notifyPreferences,
             payments
         });
     } catch (err) {
@@ -520,6 +537,51 @@ const updateNotifySettings = async (req, res) => {
         res.json({ message: 'Notification settings updated', categories: user.notifyCategories });
     } catch (err) {
         console.error('Error updating notify settings:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+// @desc    Add notify preference (subCategory + location)
+// @route   POST /api/user/notify-preference
+// @access  Private
+const addNotifyPreference = async (req, res) => {
+    try {
+        const { subCategory, location, adId } = req.body;
+        if (!subCategory || !location) {
+            return res.status(400).json({ message: 'Subcategory and location are required' });
+        }
+
+        const user = await User.findById(req.user.id);
+        if (!user) return res.status(404).json({ message: 'User not found' });
+
+        // Check if already exists to avoid duplicates
+        const exists = user.notifyPreferences.some(p => p.subCategory === subCategory && p.location === location);
+        if (exists) {
+            return res.json({ message: 'Preference already exists', preferences: user.notifyPreferences });
+        }
+
+        user.notifyPreferences.push({ subCategory, location, ad: adId });
+        await user.save();
+        res.status(201).json({ message: 'Notify preference added', preferences: user.notifyPreferences });
+    } catch (err) {
+        console.error('Error adding notify preference:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+// @desc    Remove notify preference
+// @route   DELETE /api/user/notify-preference/:id
+// @access  Private
+const removeNotifyPreference = async (req, res) => {
+    try {
+        const user = await User.findById(req.user.id);
+        if (!user) return res.status(404).json({ message: 'User not found' });
+
+        user.notifyPreferences = user.notifyPreferences.filter(p => p._id.toString() !== req.params.id);
+        await user.save();
+        res.json({ message: 'Notify preference removed', preferences: user.notifyPreferences });
+    } catch (err) {
+        console.error('Error removing notify preference:', err);
         res.status(500).json({ message: 'Server error' });
     }
 };
@@ -641,6 +703,8 @@ module.exports = {
     getPremiumUsers,
     getUserActivity,
     updateNotifySettings,
+    addNotifyPreference,
+    removeNotifyPreference,
     checkMobile,
     followUser
 };

@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { registerUser, loginUser, getMe, updateProfile, getUserActivity, updateNotifySettings } = require('../controllers/userController');
+const { registerUser, loginUser, getMe, updateProfile, getUserActivity, updateNotifySettings, addNotifyPreference, removeNotifyPreference } = require('../controllers/userController');
 const { requestOTP, verifyOTP } = require('../controllers/authController');
 const { authenticateUser: protect } = require('../middleware/auth');
 
@@ -50,6 +50,16 @@ router.put(
     ]),
     updateProfile
 );
+
+// @route   POST /api/user/notify-preference
+// @desc    Add notify preference
+// @access  Private
+router.post('/notify-preference', protect, addNotifyPreference);
+
+// @route   DELETE /api/user/notify-preference/:id
+// @desc    Remove notify preference
+// @access  Private
+router.delete('/notify-preference/:id', protect, removeNotifyPreference);
 
 // @route   PUT /api/user/notify-settings
 // @desc    Update notification settings

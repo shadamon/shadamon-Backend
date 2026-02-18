@@ -72,6 +72,61 @@ exports.createAd = async (req, res) => {
 
         const ad = await newAd.save();
 
+        // Notify matching users
+        try {
+            const Message = require('../models/Message');
+            const Conversation = require('../models/Conversation');
+
+            const matchingUsers = await User.find({
+                notifyPreferences: {
+                    $elemMatch: {
+                        subCategory: ad.subCategory,
+                        location: ad.location
+                    }
+                },
+                _id: { $ne: userId } // Don't notify the author
+            });
+
+            for (const matchingUser of matchingUsers) {
+                const welcomeText = `নতুন প্রডাক্ট এলার্ট! আপনার পছন্দের (${ad.subCategory}) ক্যাটাগরিতে একটি নতুন প্রডাক্ট পোস্ট করা হয়েছে।`;
+
+                // Create/Find conversation between system/seller and user?
+                // User said "সাইট এই প্রডাক্টের... নোটিফাই মেসেজ পাঠাবে"
+                // Let's use the Seller as sender so user can directly chat if interested
+                const senderId = ad.user || userId;
+                if (!senderId) continue; // Skip if no seller ID
+
+                let conversation = await Conversation.findOne({
+                    ad: ad._id,
+                    participants: { $all: [senderId, matchingUser._id] }
+                });
+
+                if (!conversation) {
+                    conversation = new Conversation({
+                        participants: [senderId, matchingUser._id],
+                        ad: ad._id
+                    });
+                }
+                conversation.deletedBy = [];
+
+                const notificationMsg = new Message({
+                    sender: senderId,
+                    receiver: matchingUser._id,
+                    ad: ad._id,
+                    text: welcomeText,
+                    messageType: 'notify',
+                    status: 'delivered'
+                });
+
+                const savedMsg = await notificationMsg.save();
+                conversation.lastMessage = savedMsg._id;
+                conversation.updatedAt = Date.now();
+                await conversation.save();
+            }
+        } catch (notifyErr) {
+            console.error("Error in notify logic:", notifyErr);
+        }
+
         // Increment Category Post Count
         await Category.findOneAndUpdate(
             { name: category },
@@ -677,27 +732,50 @@ exports.updateMyAd = async (req, res) => {
 // @access  Private
 exports.deleteMyAd = async (req, res) => {
     try {
-        const ad = await Ad.findOne({ _id: req.params.id, user: req.user.id });
+        const adId = req.params.id;
+        const ad = await Ad.findOne({ _id: adId, user: req.user.id });
         if (!ad) {
             return res.status(404).json({ success: false, message: 'Ad not found or unauthorized' });
         }
 
-        // Remove images from filesystem
+        // 1. Remove ad images from filesystem
         if (ad.images && ad.images.length > 0) {
             ad.images.forEach(img => {
                 if (img && !img.startsWith('data:') && !img.startsWith('http')) {
                     const filePath = path.join(__dirname, '..', img);
                     fs.unlink(filePath, (err) => {
-                        if (err && err.code !== 'ENOENT') console.error("Failed to delete image:", err);
+                        if (err && err.code !== 'ENOENT') console.error("Failed to delete ad image:", err);
                     });
                 }
             });
         }
+
+        // 2. Find all messages linked to this ad to delete their images
+        const Message = require('../models/Message');
+        const Conversation = require('../models/Conversation');
+
+        const messagesWithImages = await Message.find({ ad: adId, image: { $ne: '' } });
+
+        // Delete message images from filesystem
+        messagesWithImages.forEach(msg => {
+            if (msg.image && !msg.image.startsWith('data:') && !msg.image.startsWith('http')) {
+                const filePath = path.join(__dirname, '..', msg.image);
+                fs.unlink(filePath, (err) => {
+                    if (err && err.code !== 'ENOENT') console.error("Failed to delete message image:", err);
+                });
+            }
+        });
+
+        // 3. Delete messages and conversations from database
+        await Message.deleteMany({ ad: adId });
+        await Conversation.deleteMany({ ad: adId });
+
+        // 4. Delete the ad itself
         await ad.deleteOne();
 
         res.json({
             success: true,
-            message: 'Ad deleted successfully'
+            message: 'Ad and all associated messages/conversations deleted successfully'
         });
     } catch (err) {
         console.error("Error deleting user ad:", err.message);
