@@ -1,4 +1,5 @@
 const User = require('../models/User');
+const Notification = require('../models/Notification');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { fileToBase64 } = require('../utils/imageHelper');
@@ -157,9 +158,6 @@ const getMe = async (req, res) => {
 // @desc    Update user profile
 // @route   PUT /api/user/update
 // @access  Private
-// @desc    Update user profile
-// @route   PUT /api/user/update
-// @access  Private
 const updateProfile = async (req, res) => {
     try {
         const user = await User.findById(req.user.id);
@@ -169,18 +167,25 @@ const updateProfile = async (req, res) => {
         }
 
         const fields = [
-            'name', 'mobile', 'dob', 'gender', 'storeName',
+            'name', 'mobile', 'email', 'dob', 'gender', 'storeName',
             'actionType', 'pageName', 'category', 'location',
             'education', 'aboutYourself', 'profession', 'professionalExperience', 'sellerPageUrl', 'aboutBusiness',
             'additionalMobiles'
         ];
 
         // 1. Handle Text Fields
-        fields.forEach(field => {
+        for (const field of fields) {
             if (req.body[field] !== undefined) {
+                // If email is being updated, check for uniqueness
+                if (field === 'email' && req.body.email !== user.email && req.body.email !== '') {
+                    const emailExists = await User.findOne({ email: req.body.email });
+                    if (emailExists) {
+                        return res.status(400).json({ message: 'Email already in use by another account' });
+                    }
+                }
                 user[field] = req.body[field];
             }
-        });
+        }
 
         // 2. Handle File Uploads (mapped from req.files)
         if (req.files) {
@@ -691,6 +696,103 @@ const rateUser = async (req, res) => {
     }
 };
 
+// @desc    Get user notifications
+// @route   GET /api/user/notifications
+// @access  Private
+const getNotifications = async (req, res) => {
+    try {
+        const user = await User.findById(req.user.id);
+        if (!user) return res.status(404).json({ message: 'User not found' });
+
+        // Find individual notifications for this user OR any broadcast
+        const notifications = await Notification.find({
+            $or: [
+                { userId: req.user.id },
+                { isBroadcast: true }
+            ]
+        }).sort({ createdAt: -1 });
+
+        // Filter broadcasts to match user's profile
+        const filtered = notifications.filter(notif => {
+            if (!notif.isBroadcast) return true;
+
+            // If it's a targeted broadcast (has specific users list), check membership
+            if (notif.targetUsers && notif.targetUsers.length > 0) {
+                return notif.targetUsers.some(id => id.toString() === req.user.id);
+            }
+
+            // Otherwise, apply dynamic group/filter checks
+            // Group check
+            const isSeller = user.merchantType === 'Premium' || user.merchantType === 'Free Saller';
+            if (notif.targetGroup === 'Seller' && !isSeller) return false;
+            if (notif.targetGroup === 'Customer' && isSeller) return false;
+
+            // Simple Filter check
+            if (notif.filters) {
+                const f = notif.filters;
+                if (f.categories?.length > 0 && !f.categories.includes(user.category)) return false;
+                if (f.locations?.length > 0 && !f.locations.includes(user.location)) return false;
+                if (f.gender && user.gender) {
+                    if (f.gender.toLowerCase() !== user.gender.toLowerCase()) return false;
+                }
+                if (f.trustedSeller) {
+                    const isTrusted = user.merchantTrustStatus === 'Trusted';
+                    if (f.trustedSeller === 'Yes' && !isTrusted) return false;
+                    if (f.trustedSeller === 'UnTrusted' && isTrusted) return false;
+                }
+            }
+
+            return true;
+        });
+
+        // Map to include read status for broadcasts
+        const result = filtered.map(notif => {
+            const n = notif.toObject();
+            if (n.isBroadcast) {
+                n.isRead = n.readBy?.some(id => id.toString() === req.user.id) || false;
+            }
+            return n;
+        });
+
+        res.json(result);
+    } catch (err) {
+        console.error('Error fetching notifications:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+// @desc    Mark notification as read
+// @route   PUT /api/user/notifications/:id/read
+// @access  Private
+const markNotificationAsRead = async (req, res) => {
+    try {
+        const notification = await Notification.findById(req.params.id);
+        if (!notification) {
+            return res.status(404).json({ message: 'Notification not found' });
+        }
+
+        if (notification.isBroadcast) {
+            // Use $addToSet to ensure user ID is only added once in the database
+            await Notification.updateOne(
+                { _id: req.params.id },
+                { $addToSet: { readBy: req.user.id } }
+            );
+        } else {
+            // For individual, check ownership
+            if (notification.userId.toString() !== req.user.id) {
+                return res.status(403).json({ message: 'Unauthorized' });
+            }
+            notification.isRead = true;
+            await notification.save();
+        }
+
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Error marking notification read:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
 module.exports = {
     registerUser,
     loginUser,
@@ -706,5 +808,7 @@ module.exports = {
     addNotifyPreference,
     removeNotifyPreference,
     checkMobile,
-    followUser
+    followUser,
+    getNotifications,
+    markNotificationAsRead
 };

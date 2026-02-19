@@ -1,6 +1,11 @@
 const express = require('express');
 const router = express.Router();
-const { registerUser, loginUser, getMe, updateProfile, getUserActivity, updateNotifySettings, addNotifyPreference, removeNotifyPreference } = require('../controllers/userController');
+const {
+    registerUser, loginUser, getMe, updateProfile,
+    getUserActivity, updateNotifySettings,
+    addNotifyPreference, removeNotifyPreference,
+    getNotifications, markNotificationAsRead
+} = require('../controllers/userController');
 const { requestOTP, verifyOTP } = require('../controllers/authController');
 const { authenticateUser: protect } = require('../middleware/auth');
 
@@ -92,8 +97,12 @@ router.get('/premium', require('../controllers/userController').getPremiumUsers)
 router.post('/follow/:id', protect, require('../controllers/userController').followUser);
 
 // @route   POST /api/user/rate/:id
-// @desc    Rate a user
-// @access  Private
 router.post('/rate/:id', protect, require('../controllers/userController').rateUser);
+
+// @route   GET /api/user/notifications
+router.get('/notifications', protect, getNotifications);
+
+// @route   PUT /api/user/notifications/:id/read
+router.put('/notifications/:id/read', protect, markNotificationAsRead);
 
 module.exports = router;

@@ -31,3 +31,34 @@ exports.sendOTP = async (email, otp) => {
         return false;
     }
 };
+
+exports.sendNotificationEmail = async (email, message) => {
+    try {
+        await transporter.sendMail({
+            from: `"Shadamon Notifications" <${process.env.EMAIL_USER}>`,
+            to: email,
+            subject: 'New Notification from Shadamon',
+            html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 10px auto; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;">
+                    <div style="background-color: #1A202C; color: white; padding: 20px; text-align: center;">
+                        <h1 style="margin: 0; font-size: 24px;">SHADAMON</h1>
+                    </div>
+                    <div style="padding: 30px; line-height: 1.6; color: #2d3748;">
+                        <h2 style="color: #1A202C; margin-top: 0;">New message for you</h2>
+                        <p style="font-size: 16px;">${message}</p>
+                        <div style="margin-top: 30px; text-align: center;">
+                            <a href="${process.env.FRONTEND_URL || 'https://shadamon.com'}" style="background-color: #4A5568; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold;">View in Dashboard</a>
+                        </div>
+                    </div>
+                    <div style="background-color: #f7fafc; padding: 15px; text-align: center; font-size: 12px; color: #718096;">
+                        © ${new Date().getFullYear()} Shadamon. All rights reserved.
+                    </div>
+                </div>
+            `
+        });
+        return true;
+    } catch (error) {
+        console.error("Notification Email send failed:", error);
+        return false;
+    }
+};

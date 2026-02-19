@@ -1,7 +1,10 @@
 const Admin = require('../models/Admin');
 const User = require('../models/User');
+const Notification = require('../models/Notification');
+const Ad = require('../models/Ad');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const emailService = require('../utils/emailService');
 const { fileToBase64, processImageString } = require('../utils/imageHelper');
 
 // @desc    Admin login
@@ -143,6 +146,19 @@ const updateAdmin = async (req, res) => {
         });
     } catch (err) {
         console.error('Error updating admin:', err);
+        res.status(500).json({ message: 'Database operation failed', error: err.message });
+    }
+};
+
+// @desc    Get total user count
+// @route   GET /api/admins/users/count
+// @access  Private (Admin)
+const getUserCount = async (req, res) => {
+    try {
+        const count = await User.countDocuments();
+        res.json({ count });
+    } catch (err) {
+        console.error('Error fetching user count:', err);
         res.status(500).json({ message: 'Database operation failed', error: err.message });
     }
 };
@@ -306,6 +322,244 @@ const deleteUser = async (req, res) => {
     }
 };
 
+// @desc    Search users by mobile (for selection)
+// @route   GET /api/admins/users/search/mobile
+// @access  Private (Admin)
+const searchUsersByMobile = async (req, res) => {
+    const { query } = req.query;
+    if (!query || query.length < 2) {
+        return res.json([]);
+    }
+
+    try {
+        const users = await User.find({
+            mobile: { $regex: '^' + query, $options: 'i' }
+        }).limit(10).select('mobile name');
+        res.json(users);
+    } catch (err) {
+        console.error('Error searching users:', err);
+        res.status(500).json({ message: 'Database operation failed', error: err.message });
+    }
+};
+
+// Helper to get users matching complex filters
+const getFilteredUserIds = async (filters) => {
+    const {
+        userType, categories, locations, promotedType,
+        gender, trustedSeller, loginFrom, loginTo, postQuantity,
+        selectedUsers
+    } = filters;
+
+    let query = {};
+
+    // 1. Basic User Type / Selection
+    if (userType === 'Selected') {
+        const users = await User.find({ mobile: { $in: selectedUsers || [] } }).select('_id');
+        return users.map(u => u._id);
+    } else if (userType === 'Seller') {
+        query.merchantType = { $in: ['Premium', 'Free Saller'] };
+    } else if (userType === 'Customer') {
+        query.merchantType = 'Free';
+    }
+
+    // 2. Simple Meta Filters
+    if (categories && categories.length > 0 && !categories.includes('All')) {
+        query.category = { $in: categories };
+    }
+    if (locations && locations.length > 0 && !locations.includes('All')) {
+        query.location = { $in: locations };
+    }
+    if (gender && gender !== 'All') {
+        query.gender = { $regex: new RegExp(`^${gender}$`, 'i') };
+    }
+    if (trustedSeller && trustedSeller !== 'All') {
+        query.merchantTrustStatus = (trustedSeller === 'Yes') ? 'Trusted' : 'Untrusted';
+    }
+
+    // 3. Login Status (Registration Date Range)
+    if (loginFrom || loginTo) {
+        query.createdAt = {};
+        if (loginFrom) query.createdAt.$gte = new Date(loginFrom);
+        if (loginTo) query.createdAt.$lte = new Date(loginTo);
+    }
+
+    // 4. Complex Filters (Promoted Type, Post Quantity) requiring Ads lookup
+    let pipeline = [{ $match: query }];
+
+    if (promotedType || postQuantity) {
+        pipeline.push({
+            $lookup: {
+                from: 'ads',
+                localField: '_id',
+                foreignField: 'user',
+                as: 'userAds'
+            }
+        });
+
+        if (postQuantity) {
+            const minQty = parseInt(postQuantity.replace('+', '')) || 0;
+            pipeline.push({
+                $match: {
+                    $expr: { $gte: [{ $size: '$userAds' }, minQty] }
+                }
+            });
+        }
+
+        if (promotedType && promotedType !== 'All') {
+            const now = new Date();
+            if (promotedType === 'Running') {
+                pipeline.push({
+                    $match: {
+                        userAds: {
+                            $elemMatch: {
+                                adType: 'Promoted',
+                                status: 'active',
+                                $or: [
+                                    { promoteEndDate: { $gt: now } },
+                                    { showTill: { $gt: now } }
+                                ]
+                            }
+                        }
+                    }
+                });
+            } else if (promotedType === 'PP') {
+                // Previously Promoted: Has promoted ads but none currently running/active
+                pipeline.push({
+                    $match: {
+                        $and: [
+                            { userAds: { $elemMatch: { adType: 'Promoted' } } },
+                            {
+                                userAds: {
+                                    $not: {
+                                        $elemMatch: {
+                                            adType: 'Promoted',
+                                            status: 'active',
+                                            $or: [
+                                                { promoteEndDate: { $gt: now } },
+                                                { showTill: { $gt: now } }
+                                            ]
+                                        }
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                });
+            } else if (promotedType === 'Never Promoted') {
+                pipeline.push({
+                    $match: {
+                        userAds: { $not: { $elemMatch: { adType: 'Promoted' } } }
+                    }
+                });
+            }
+        }
+    }
+
+    pipeline.push({ $project: { _id: 1 } });
+    const results = await User.aggregate(pipeline);
+    return results.map(r => r._id);
+};
+
+// @desc    Get count of users matching filters
+// @route   POST /api/admins/notifications/count
+const getNotificationTargetCount = async (req, res) => {
+    try {
+        const targetUserIds = await getFilteredUserIds(req.body);
+        res.json({ count: targetUserIds.length });
+    } catch (err) {
+        console.error('Error counting target users:', err);
+        res.status(500).json({ message: 'Server error', error: err.message });
+    }
+};
+
+// @desc    Send notifications to users based on filters
+// @route   POST /api/admins/notifications/send
+// @access  Private (Admin)
+const sendNotification = async (req, res) => {
+    const {
+        userType, categories, locations, promotedType,
+        gender, trustedSeller, loginFrom, loginTo, postQuantity,
+        sendIn, message, selectedUsers
+    } = req.body;
+
+    try {
+        const targetUserIds = await getFilteredUserIds(req.body);
+
+        if (targetUserIds.length === 0) {
+            return res.status(400).json({ message: 'No users found matching these filters' });
+        }
+
+        // Handle Account Notifications (Optimized Broadcast)
+        if (sendIn.includes('Account')) {
+            // Check if we can use a "Smart Broadcast" or if we need a "Targeted Broadcast"
+            // If it's a simple Group Broadcast (All/Seller/Customer) without other sub-filters, we use dynamic logic
+            // But to ensure "perfect" filtering as requested, we now support targetUsers list.
+
+            const isSimpleGroup = (userType === 'All' || userType === 'Seller' || userType === 'Customer') &&
+                !promotedType && !postQuantity && !loginFrom && !loginTo &&
+                (!categories || categories.includes('All')) &&
+                (!locations || locations.includes('All')) &&
+                gender === 'All' && trustedSeller === 'All';
+
+            const broadcastNotification = new Notification({
+                isBroadcast: true,
+                targetGroup: userType,
+                message,
+                title: 'SHADAMON',
+                filters: {
+                    categories: (categories && categories.includes('All')) ? [] : categories,
+                    locations: (locations && locations.includes('All')) ? [] : locations,
+                    gender: gender === 'All' ? undefined : gender,
+                    trustedSeller: trustedSeller === 'All' ? undefined : trustedSeller,
+                    promotedType: promotedType || undefined,
+                    postQuantity: postQuantity || undefined,
+                    loginStatus: (loginFrom || loginTo) ? { from: loginFrom, to: loginTo } : undefined
+                },
+                // If selection or complex filters, store IDs to ensure perfect matching
+                targetUsers: isSimpleGroup ? [] : targetUserIds
+            });
+
+            await broadcastNotification.save();
+
+            // Emit real-time socket events
+            const io = req.app.get('socketio');
+            if (io) {
+                targetUserIds.forEach(id => {
+                    io.to(id.toString()).emit('notification received', {
+                        message,
+                        title: 'SHADAMON',
+                        createdAt: new Date()
+                    });
+                });
+            }
+        }
+
+        // Handle Email Notifications
+        let usersWithoutEmail = [];
+        if (sendIn.includes('Mail')) {
+            const usersWithEmail = await User.find({ _id: { $in: targetUserIds } }).select('email name mobile');
+            for (const user of usersWithEmail) {
+                if (user.email) {
+                    await emailService.sendNotificationEmail(user.email, message);
+                } else {
+                    usersWithoutEmail.push(user.name || user.mobile || user._id);
+                }
+            }
+        }
+
+        res.json({
+            success: true,
+            message: `Notification sent to ${targetUserIds.length} users`,
+            targetCount: targetUserIds.length,
+            usersWithoutEmail: usersWithoutEmail.length > 0 ? usersWithoutEmail : undefined
+        });
+
+    } catch (err) {
+        console.error('Error sending notification:', err);
+        res.status(500).json({ message: 'Server error', error: err.message });
+    }
+};
+
 module.exports = {
     loginAdmin,
     getAllAdmins,
@@ -313,7 +567,11 @@ module.exports = {
     deleteAdmin,
     updateAdmin,
     getAllUsers,
+    getUserCount,
     addUser,
     updateUser,
-    deleteUser
+    deleteUser,
+    searchUsersByMobile,
+    sendNotification,
+    getNotificationTargetCount // Export the new function
 };

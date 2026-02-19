@@ -9,7 +9,10 @@ const {
     getAllUsers,
     addUser,
     updateUser,
-    deleteUser
+    deleteUser,
+    searchUsersByMobile,
+    getUserCount,
+    sendNotification
 } = require('../controllers/adminController');
 const PromotionPlan = require('../models/PromotionPlan');
 const Ad = require('../models/Ad');
@@ -40,6 +43,12 @@ router.delete('/:id', verifyToken, checkSuperAdmin, deleteAdmin);
 router.put('/:id', verifyToken, checkSuperAdmin, updateAdmin);
 
 // User Management Routes (for Admin Panel)
+// @route   GET /api/admins/users/search-mobile
+router.get('/users/search-mobile', verifyToken, searchUsersByMobile);
+
+// @route   GET /api/admins/users/count
+router.get('/users/count', verifyToken, getUserCount);
+
 // @route   GET /api/admins/users
 router.get('/users', verifyToken, getAllUsers);
 
@@ -59,6 +68,12 @@ router.put('/users/:id', verifyToken, upload.fields([
 
 // @route   DELETE /api/admins/users/:id
 router.delete('/users/:id', verifyToken, deleteUser);
+
+// @route   POST /api/admins/notifications/send
+router.post('/notifications/send', verifyToken, sendNotification);
+
+// @route   POST /api/admins/notifications/count
+router.post('/notifications/count', verifyToken, require('../controllers/adminController').getNotificationTargetCount);
 
 // --- Promotion Plan Routes ---
 

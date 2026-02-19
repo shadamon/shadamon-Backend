@@ -35,6 +35,9 @@ const io = new (require('socket.io').Server)(server, {
     }
 });
 
+// Make io accessible to our router/controllers
+app.set('socketio', io);
+
 const PORT = process.env.PORT || 5000;
 
 // Socket.io logic
