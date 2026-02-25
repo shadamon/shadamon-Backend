@@ -6,7 +6,7 @@ const {
     addNotifyPreference, removeNotifyPreference,
     getNotifications, markNotificationAsRead
 } = require('../controllers/userController');
-const { requestOTP, verifyOTP } = require('../controllers/authController');
+const { requestOTP, verifyOTP, requestMobileOTP, verifyMobileOTP } = require('../controllers/authController');
 const { authenticateUser: protect } = require('../middleware/auth');
 
 // @route   POST /api/user/register
@@ -61,6 +61,16 @@ router.put(
 // @access  Private
 router.post('/notify-preference', protect, addNotifyPreference);
 
+// @route   POST /api/user/notify-preference/toggle
+// @desc    Toggle notify preference
+// @access  Private
+router.post('/notify-preference/toggle', protect, require('../controllers/userController').toggleNotifyPreference);
+
+// @route   POST /api/user/favorite/:id
+// @desc    Toggle favorite ad
+// @access  Private
+router.post('/favorite/:id', protect, require('../controllers/userController').toggleFavoriteAd);
+
 // @route   DELETE /api/user/notify-preference/:id
 // @desc    Remove notify preference
 // @access  Private
@@ -81,6 +91,16 @@ router.post('/otp/request', protect, requestOTP);
 // @access  Private
 router.post('/otp/verify', protect, verifyOTP);
 
+// @route   POST /api/user/otp/mobile/request
+// @desc    Request Mobile OTP for verification
+// @access  Public
+router.post('/otp/mobile/request', requestMobileOTP);
+
+// @route   POST /api/user/otp/mobile/verify
+// @desc    Verify Mobile OTP
+// @access  Public
+router.post('/otp/mobile/verify', verifyMobileOTP);
+
 // @route   GET /api/user/profile/:id
 // @desc    Get public profile
 // @access  Public
@@ -95,6 +115,11 @@ router.get('/premium', require('../controllers/userController').getPremiumUsers)
 // @desc    Follow or Unfollow a user
 // @access  Private
 router.post('/follow/:id', protect, require('../controllers/userController').followUser);
+
+router.post('/check-url', protect, require('../controllers/userController').checkSellerUrl);
+
+// @route   POST /api/user/profile/:id/view
+router.post('/profile/:id/view', require('../controllers/userController').incrementProfileViews);
 
 // @route   POST /api/user/rate/:id
 router.post('/rate/:id', protect, require('../controllers/userController').rateUser);

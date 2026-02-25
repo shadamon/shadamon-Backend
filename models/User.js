@@ -46,6 +46,20 @@ const UserSchema = new mongoose.Schema({
         type: String,
         default: 'Not Verified'
     },
+    verifiedNumber: {
+        type: String
+    },
+    verifiedAt: {
+        type: Date
+    },
+    mVerified: {
+        type: Boolean,
+        default: false
+    },
+    mobileVerified: {
+        type: Boolean,
+        default: false
+    },
     location: {
         type: String
     },
@@ -65,6 +79,10 @@ const UserSchema = new mongoose.Schema({
         enum: ['Trusted', 'Untrusted'],
         default: 'Untrusted'
     },
+    freeAdLimit: {
+        type: Number,
+        default: 5
+    },
     // Extended Profile Fields
     education: { type: String },
     aboutYourself: { type: String },
@@ -72,6 +90,7 @@ const UserSchema = new mongoose.Schema({
     professionalExperience: { type: String },
     sellerPageUrl: { type: String, unique: true, sparse: true }, // Slug for shop URL
     aboutBusiness: { type: String },
+    contact: { type: String },
     storeLogo: {
         type: String // Base64 or URL
     },
@@ -137,7 +156,11 @@ const UserSchema = new mongoose.Schema({
         location: String,
         ad: { type: mongoose.Schema.Types.ObjectId, ref: 'Ad' },
         createdAt: { type: Date, default: Date.now }
-    }]
+    }],
+    profileViews: {
+        type: Number,
+        default: 0
+    }
 });
 
 // Hash password before saving

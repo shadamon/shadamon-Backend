@@ -65,6 +65,12 @@ const adSchema = new mongoose.Schema({
         type: String,
         enum: ['call_msg', 'traffic']
     },
+    trafficLink: {
+        type: String
+    },
+    trafficButtonType: {
+        type: String
+    },
     promoteTag: {
         type: String,
         enum: ['All', 'Urgent', 'Discount', 'Offer', 'Highlights'],
@@ -87,7 +93,7 @@ const adSchema = new mongoose.Schema({
     },
     status: {
         type: String,
-        enum: ['active', 'pending', 'rejected', 'expired', 'notification', 'pause', 'review', 'atv_msg', 'unatv_msg'],
+        enum: ['active', 'pending', 'rejected', 'expired', 'notification', 'pause', 'review', 'atv_msg', 'unatv_msg', 'deleted'],
         default: 'active'
     },
     views: {
@@ -110,6 +116,10 @@ const adSchema = new mongoose.Schema({
         type: Date,
         default: Date.now
     },
+    promotedDeliveryCount: {
+        type: Number,
+        default: 0
+    },
     dailyViewsCount: {
         type: Number,
         default: 0
@@ -117,6 +127,10 @@ const adSchema = new mongoose.Schema({
     lastViewsDate: {
         type: Date,
         default: Date.now
+    },
+    promotedViews: {
+        type: Number,
+        default: 0
     },
     price: {
         type: Number

@@ -24,6 +24,11 @@ router.get('/me', authenticateUser, adController.getMyAds);
 // @access  Private
 router.put('/:id', authenticateUser, upload.array('images', 5), adController.updateMyAd);
 
+// @route   PUT api/ads/:id/toggle-status
+// @desc    Toggle user's own ad status
+// @access  Private
+router.put('/:id/toggle-status', authenticateUser, adController.toggleAdStatusMyAd);
+
 // @route   DELETE api/ads/:id
 // @desc    Delete user's own ad
 // @access  Private

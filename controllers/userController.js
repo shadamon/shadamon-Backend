@@ -170,20 +170,25 @@ const updateProfile = async (req, res) => {
             'name', 'mobile', 'email', 'dob', 'gender', 'storeName',
             'actionType', 'pageName', 'category', 'location',
             'education', 'aboutYourself', 'profession', 'professionalExperience', 'sellerPageUrl', 'aboutBusiness',
-            'additionalMobiles'
+            'additionalMobiles', 'contact'
         ];
 
         // 1. Handle Text Fields
         for (const field of fields) {
             if (req.body[field] !== undefined) {
-                // If email is being updated, check for uniqueness
-                if (field === 'email' && req.body.email !== user.email && req.body.email !== '') {
+                // If 'email' or 'sellerPageUrl' are empty strings, set them to undefined
+                if ((field === 'email' || field === 'sellerPageUrl') && req.body[field] === '') {
+                    user[field] = undefined;
+                } else if (field === 'email' && req.body.email !== user.email) {
+                    // If email is being updated and is not empty, check for uniqueness
                     const emailExists = await User.findOne({ email: req.body.email });
                     if (emailExists) {
                         return res.status(400).json({ message: 'Email already in use by another account' });
                     }
+                    user[field] = req.body[field];
+                } else {
+                    user[field] = req.body[field];
                 }
-                user[field] = req.body[field];
             }
         }
 
@@ -470,7 +475,7 @@ const googleLogin = async (req, res) => {
 const getPremiumUsers = async (req, res) => {
     try {
         const users = await User.find({ merchantType: 'Premium' })
-            .select('name storeName photo photoStatus merchantType')
+            .select('name storeName photo photoStatus merchantType verifiedBy profileViews mVerified')
             .lean();
 
         // Filter users who might have photoStatus != 'approved' if strict
@@ -629,6 +634,67 @@ const followUser = async (req, res) => {
         }
     } catch (err) {
         console.error('Error following user:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+// @desc    Toggle favorite ad
+// @route   POST /api/user/favorite/:id
+// @access  Private
+const toggleFavoriteAd = async (req, res) => {
+    try {
+        const user = await User.findById(req.user.id);
+        if (!user) return res.status(404).json({ message: 'User not found' });
+
+        const adId = req.params.id;
+        const isFavorited = user.favorites.includes(adId);
+
+        if (isFavorited) {
+            // Unfavorite
+            user.favorites = user.favorites.filter(id => id.toString() !== adId);
+            await user.save();
+            res.json({ success: true, message: 'Removed from favorites', isFavorited: false });
+        } else {
+            // Favorite
+            user.favorites.push(adId);
+            await user.save();
+            res.json({ success: true, message: 'Added to favorites', isFavorited: true });
+        }
+    } catch (err) {
+        console.error('Error toggling favorite:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+// @desc    Toggle notify preference (subCategory + location)
+// @route   POST /api/user/notify-preference/toggle
+// @access  Private
+const toggleNotifyPreference = async (req, res) => {
+    try {
+        const { subCategory, location, adId } = req.body;
+        if (!subCategory || !location) {
+            return res.status(400).json({ message: 'Subcategory and location are required' });
+        }
+
+        const user = await User.findById(req.user.id);
+        if (!user) return res.status(404).json({ message: 'User not found' });
+
+        // Find if exists
+        const index = user.notifyPreferences.findIndex(p => p.subCategory === subCategory && p.location === location);
+
+        if (index !== -1) {
+            // Remove
+            user.notifyPreferences.splice(index, 1);
+            await user.save();
+            res.json({ success: true, message: 'Notify preference removed', isNotifying: false });
+        } else {
+            // Add
+            user.notifyPreferences.push({ subCategory, location, ad: adId });
+            await user.save();
+            res.status(201).json({ success: true, message: 'Notify preference added', isNotifying: true });
+        }
+    } catch (err) {
+        console.error('Error toggling notify preference:', err);
         res.status(500).json({ message: 'Server error' });
     }
 };
@@ -793,6 +859,41 @@ const markNotificationAsRead = async (req, res) => {
     }
 };
 
+const checkSellerUrl = async (req, res) => {
+    const { url } = req.body;
+    try {
+        if (!url) return res.status(400).json({ message: 'URL is required' });
+
+        // Find if any other user has this URL
+        const existingUser = await User.findOne({
+            sellerPageUrl: url,
+            _id: { $ne: req.user.id } // Exclude current user
+        });
+
+        res.json({ available: !existingUser });
+    } catch (err) {
+        console.error('Error checking seller URL:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+const incrementProfileViews = async (req, res) => {
+    try {
+        const user = await User.findByIdAndUpdate(
+            req.params.id,
+            { $inc: { profileViews: 1 } },
+            { new: true }
+        );
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+        res.json({ success: true, profileViews: user.profileViews });
+    } catch (err) {
+        console.error('Error incrementing profile views:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
 module.exports = {
     registerUser,
     loginUser,
@@ -810,5 +911,9 @@ module.exports = {
     checkMobile,
     followUser,
     getNotifications,
-    markNotificationAsRead
+    markNotificationAsRead,
+    incrementProfileViews,
+    checkSellerUrl,
+    toggleFavoriteAd,
+    toggleNotifyPreference
 };

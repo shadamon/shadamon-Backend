@@ -1,6 +1,8 @@
 const User = require('../models/User');
 const OTP = require('../models/OTP');
+const MobileOTP = require('../models/MobileOTP');
 const { sendOTP } = require('../utils/emailService');
+const { sendSMSOTP } = require('../utils/smsService');
 
 // Generate 6 digit numeric OTP
 const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
@@ -62,6 +64,60 @@ exports.verifyOTP = async (req, res) => {
 
     } catch (err) {
         console.error(err);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+
+exports.requestMobileOTP = async (req, res) => {
+    try {
+        const { phone } = req.body;
+        if (!phone) {
+            return res.status(400).json({ success: false, message: 'Phone number is required' });
+        }
+
+        const otp = generateOTP();
+
+        // Remove existing OTPs for this phone
+        await MobileOTP.deleteMany({ phone });
+
+        // Save new OTP
+        await new MobileOTP({ phone, otp }).save();
+
+        // Send SMS
+        const smsSent = await sendSMSOTP(phone, otp);
+
+        if (smsSent) {
+            res.json({ success: true, message: 'OTP sent to your mobile' });
+        } else {
+            res.status(500).json({ success: false, message: 'Failed to send SMS' });
+        }
+
+    } catch (err) {
+        console.error("Mobile OTP Request Error:", err);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+
+exports.verifyMobileOTP = async (req, res) => {
+    try {
+        const { phone, otp } = req.body;
+        if (!phone || !otp) {
+            return res.status(400).json({ success: false, message: 'Phone and OTP are required' });
+        }
+
+        const record = await MobileOTP.findOne({ phone, otp });
+
+        if (!record) {
+            return res.status(400).json({ success: false, message: 'Invalid or expired OTP' });
+        }
+
+        // Cleanup OTP
+        await MobileOTP.deleteOne({ _id: record._id });
+
+        res.json({ success: true, message: 'Mobile verification successful', isVerified: true });
+
+    } catch (err) {
+        console.error("Mobile OTP Verify Error:", err);
         res.status(500).json({ success: false, message: 'Server error' });
     }
 };

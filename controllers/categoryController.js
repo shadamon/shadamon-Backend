@@ -176,7 +176,7 @@ exports.deleteSubCategory = async (req, res) => {
 // --- Feature Controllers ---
 exports.createFeature = async (req, res) => {
     try {
-        const { name, category, inputType, order, status, buttonType, boxFadeName, buttonItemNames } = req.body;
+        const { name, category, inputType, order, status, buttonType, selectionType, boxFadeName, buttonItemNames } = req.body;
 
         const feature = new Feature({
             name,
@@ -185,6 +185,7 @@ exports.createFeature = async (req, res) => {
             order,
             status: status === 'true' || status === true,
             buttonType,
+            selectionType,
             boxFadeName,
             buttonItemNames: buttonItemNames || []
         });
@@ -198,7 +199,7 @@ exports.createFeature = async (req, res) => {
 
 exports.updateFeature = async (req, res) => {
     try {
-        const { name, category, inputType, order, status, buttonType, boxFadeName, buttonItemNames } = req.body;
+        const { name, category, inputType, order, status, buttonType, selectionType, boxFadeName, buttonItemNames } = req.body;
         const updateData = {
             name,
             category,
@@ -206,6 +207,7 @@ exports.updateFeature = async (req, res) => {
             order,
             status: status === 'true' || status === true,
             buttonType,
+            selectionType,
             boxFadeName,
             buttonItemNames: buttonItemNames || []
         };

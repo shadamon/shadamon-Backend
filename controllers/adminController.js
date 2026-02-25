@@ -184,7 +184,7 @@ const addUser = async (req, res) => {
         name, email, password, dob, gender, mobile,
         storeName, actionType, accountStatus, verifiedBy,
         location, category, pageName, merchantType,
-        merchantVerifiedBy, merchantTrustStatus
+        mVerified, merchantTrustStatus
     } = req.body;
 
     try {
@@ -197,7 +197,7 @@ const addUser = async (req, res) => {
             name, email, password, dob, gender, mobile,
             storeName, actionType, accountStatus, verifiedBy,
             location, category, pageName, merchantType,
-            merchantVerifiedBy: merchantVerifiedBy || 'Mobile',
+            mVerified: mVerified === 'true' || mVerified === true,
             merchantTrustStatus: merchantTrustStatus || 'Untrusted',
 
             photo: req.files?.photo ? fileToBase64(req.files.photo[0]) : processImageString(req.body.photo),
@@ -228,7 +228,7 @@ const updateUser = async (req, res) => {
         storeName, actionType, accountStatus, verifiedBy,
         location, category, pageName, merchantType, password,
         storeLogoStatus, storeBannerStatus, photoStatus,
-        merchantVerifiedBy, merchantTrustStatus
+        mVerified, merchantTrustStatus
     } = req.body;
 
     try {
@@ -250,7 +250,7 @@ const updateUser = async (req, res) => {
         if (location) user.location = location;
         if (category) user.category = category;
         if (pageName) user.pageName = pageName;
-        if (merchantVerifiedBy) user.merchantVerifiedBy = merchantVerifiedBy;
+        if (mVerified !== undefined) user.mVerified = mVerified === 'true' || mVerified === true;
         if (merchantTrustStatus) user.merchantTrustStatus = merchantTrustStatus;
 
         if (merchantType) user.merchantType = merchantType;

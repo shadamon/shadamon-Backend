@@ -16,6 +16,7 @@ const {
 } = require('../controllers/adminController');
 const PromotionPlan = require('../models/PromotionPlan');
 const Ad = require('../models/Ad');
+const User = require('../models/User');
 const { verifyToken, checkSuperAdmin } = require('../middleware/auth');
 const upload = require('../middleware/upload');
 
@@ -120,19 +121,70 @@ router.delete('/promotion-plans/:id', verifyToken, async (req, res) => {
 
 // POST manual product promote
 router.post('/manual-promote', verifyToken, async (req, res) => {
-    const { productId, adType, amount, runTill } = req.body;
+    const { productId, amount, runTill, sellerId, isVerifyBadge, level } = req.body;
     try {
-        const ad = await Ad.findById(productId);
-        if (!ad) return res.status(404).json({ message: 'Product not found' });
+        let ad = null;
+        if (productId) {
+            ad = await Ad.findById(productId);
+            if (!ad) return res.status(404).json({ message: 'Product not found' });
 
-        ad.adType = adType;
-        ad.promoteBudget = amount;
-        ad.showTill = runTill;
-        ad.status = 'active';
+            // Update Ad promotion details
+            ad.adType = 'Promoted';
+            ad.promoteBudget = Number(amount);
+            ad.promoteDuration = Number(runTill);
 
-        await ad.save();
-        res.json({ success: true, message: 'Ad promoted manually', data: ad });
+            // Calculate promoteEndDate/showTill from runTill (days)
+            const days = parseInt(runTill) || 0;
+            if (days > 0) {
+                const endDate = new Date();
+                endDate.setDate(endDate.getDate() + days);
+                ad.promoteEndDate = endDate;
+                ad.showTill = endDate;
+            }
+
+            // Handle Level/Label
+            if (level) {
+                // Check if level matches promoteTag enum
+                if (['Urgent', 'Discount', 'Offer', 'Highlights'].includes(level)) {
+                    ad.promoteTag = level;
+                } else {
+                    // Store in features if not a standard tag
+                    if (!ad.features) ad.features = {};
+                    ad.features.promoteLabel = level;
+                }
+            }
+
+            ad.status = 'active';
+            await ad.save();
+        }
+
+        // Handle Seller Verification Badge
+        if (sellerId) {
+            const user = await User.findById(sellerId);
+            if (user) {
+                if (isVerifyBadge === 'Yes') {
+                    user.verifiedBy = 'Admin';
+                    user.merchantTrustStatus = 'Trusted';
+                } else if (isVerifyBadge === 'No') {
+                    // Option to remove verification if explicitly set to No
+                    user.verifiedBy = 'Not Verified';
+                    user.merchantTrustStatus = 'Untrusted';
+                }
+                await user.save();
+            } else {
+                if (!productId) {
+                    return res.status(404).json({ message: 'User not found' });
+                }
+            }
+        }
+
+        res.json({
+            success: true,
+            message: ad ? 'Ad promoted manually' : 'Seller verification updated',
+            data: ad
+        });
     } catch (err) {
+        console.error("Manual promote error:", err);
         res.status(500).json({ message: err.message });
     }
 });

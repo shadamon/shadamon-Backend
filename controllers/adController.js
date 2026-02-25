@@ -36,7 +36,8 @@ exports.createAd = async (req, res) => {
             actionType,
             price,
             priceType,
-            features
+            features,
+            verificationInfo
         } = req.body;
 
         if (!phone) {
@@ -47,6 +48,43 @@ exports.createAd = async (req, res) => {
         // Process images
         let imagePaths = req.files ? req.files.map(file => file.path.replace(/\\/g, "/")) : [];
         // Removed base64 image processing
+
+        let adStatus = 'active';
+        let limitReached = false;
+        let freeAdLimit = 0;
+
+        if (userId) {
+            const user = await User.findById(userId);
+            if (user) {
+                // Default pause for Untrusted or missing trust status
+                if (user.merchantTrustStatus !== 'Trusted') {
+                    adStatus = 'pause';
+                }
+
+                // Check free ad limit for non-premium users
+                if (user.merchantType === 'Free') {
+                    freeAdLimit = user.freeAdLimit || 5;
+                    const activeAdCount = await Ad.countDocuments({
+                        user: userId,
+                        status: { $in: ['active', 'pending', 'pause', 'review'] }
+                    });
+
+                    if (activeAdCount >= freeAdLimit) {
+                        adStatus = 'pause';
+                        limitReached = true;
+                    }
+                }
+
+                // Override: Trusted users always get published directly
+                if (user.merchantTrustStatus === 'Trusted') {
+                    adStatus = 'active';
+                    limitReached = false;
+                }
+            }
+        } else {
+            // Anonymous users are treated as untrusted
+            adStatus = 'pause';
+        }
 
         const newAd = new Ad({
             user: userId, // Can be null now
@@ -67,10 +105,25 @@ exports.createAd = async (req, res) => {
             price,
             priceType,
             features: features ? (typeof features === 'string' ? JSON.parse(features) : features) : {},
-            status: 'active'
+            status: adStatus
         });
 
         const ad = await newAd.save();
+
+        // Update user verification status if verification info is provided
+        if (verificationInfo && (ad.user || userId)) {
+            try {
+                const vInfo = typeof verificationInfo === 'string' ? JSON.parse(verificationInfo) : verificationInfo;
+                await User.findByIdAndUpdate(ad.user || userId, {
+                    verifiedBy: 'Mobile',
+                    verifiedNumber: vInfo.number || phone,
+                    verifiedAt: vInfo.at || new Date(),
+                    mobileVerified: true
+                });
+            } catch (vErr) {
+                console.error("Error updating verification info:", vErr.message);
+            }
+        }
 
         // Notify matching users
         try {
@@ -142,7 +195,9 @@ exports.createAd = async (req, res) => {
         res.status(201).json({
             success: true,
             message: 'Ad posted successfully',
-            data: ad
+            data: ad,
+            limitReached,
+            limit: freeAdLimit
         });
     } catch (err) {
         console.error("Error creating ad:", err.message);
@@ -175,7 +230,7 @@ exports.getAllAdsAdmin = async (req, res) => {
         );
 
         const ads = await Ad.find(query)
-            .populate('user', 'name email mobile storeLogo storeBanner merchantType') // Populate user details
+            .populate('user', 'name email mobile storeLogo storeBanner merchantType mVerified') // Populate user details
             .sort({ createdAt: -1 });
 
         res.json({
@@ -195,7 +250,7 @@ exports.getAllAdsAdmin = async (req, res) => {
 exports.getAllPromotedAdsAdmin = async (req, res) => {
     try {
         const ads = await Ad.find({ adType: 'Promoted' })
-            .populate('user', 'name email mobile storeLogo storeBanner merchantType')
+            .populate('user', 'name email mobile storeLogo storeBanner merchantType mVerified')
             .sort({ createdAt: -1 });
 
         res.json({
@@ -216,7 +271,7 @@ exports.updateAdStatus = async (req, res) => {
     try {
         const { status } = req.body;
 
-        if (!['active', 'pending', 'rejected', 'expired'].includes(status)) {
+        if (!['active', 'pending', 'rejected', 'expired', 'pause', 'review'].includes(status)) {
             return res.status(400).json({ success: false, message: 'Invalid status' });
         }
 
@@ -476,8 +531,8 @@ exports.getAllAdsPublic = async (req, res) => {
 
         // Fetch active ads
         let adsQuery = Ad.find(query)
-            .select('headline price images location subLocation category subCategory createdAt deliveryCount user adType')
-            .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType createdAt verifiedBy')
+            .select('headline description features views price images location subLocation category subCategory createdAt deliveryCount user adType phone hidePhone additionalPhones')
+            .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType createdAt verifiedBy mVerified')
             .sort(sortQuery);
 
         if (limit) {
@@ -521,6 +576,12 @@ exports.getAllAdsPublic = async (req, res) => {
                 { _id: { $in: adIds } },
                 { $inc: { deliveryCount: 1, dailyDeliveryCount: 1 }, $set: { lastDeliveryDate: new Date() } }
             ).catch(err => console.error("Error updating delivery counts:", err));
+
+            // 3. Increment promotedDeliveryCount for promoted ads
+            await Ad.updateMany(
+                { _id: { $in: adIds }, adType: 'Promoted' },
+                { $inc: { promotedDeliveryCount: 1 } }
+            ).catch(err => console.error("Error updating promoted delivery counts:", err));
         }
 
         res.json({
@@ -570,7 +631,7 @@ exports.getAdsCount = async (req, res) => {
 exports.getSingleAdPublic = async (req, res) => {
     try {
         const ad = await Ad.findById(req.params.id)
-            .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType verifiedBy');
+            .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType verifiedBy mVerified');
 
         if (!ad) {
             return res.status(404).json({ success: false, message: 'Ad not found' });
@@ -580,19 +641,30 @@ exports.getSingleAdPublic = async (req, res) => {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
-        const adForViews = await Ad.findById(req.params.id);
-        if (adForViews) {
-            let update = { $inc: { views: 1, dailyViewsCount: 1 }, $set: { lastViewsDate: new Date() } };
-            if (!adForViews.lastViewsDate || adForViews.lastViewsDate < today) {
-                update.$set.dailyViewsCount = 1;
-                delete update.$inc.dailyViewsCount;
-            }
-            await Ad.findByIdAndUpdate(req.params.id, update);
+        let update = {
+            $inc: { views: 1 },
+            $set: { lastViewsDate: new Date() }
+        };
+
+        // Handle dailyViewsCount logic
+        if (!ad.lastViewsDate || ad.lastViewsDate < today) {
+            update.$set.dailyViewsCount = 1;
+        } else {
+            update.$inc.dailyViewsCount = 1;
         }
 
-        // Return ad with updated view count locally? No need, just return data.
-        // Or if user wants to see updated view count immediately:
+        // Increment promotedViews if ad is promoted
+        if (ad.adType === 'Promoted') {
+            update.$inc.promotedViews = 1;
+        }
+
+        await Ad.findByIdAndUpdate(req.params.id, update);
+
+        // Update local object for immediate response feedback
         ad.views += 1;
+        if (ad.adType === 'Promoted') {
+            ad.promotedViews = (ad.promotedViews || 0) + 1;
+        }
 
         res.json({
             success: true,
@@ -728,7 +800,7 @@ exports.updateMyAd = async (req, res) => {
 };
 
 // @route   DELETE api/ads/:id
-// @desc    Delete an ad by its owner
+// @desc    Soft delete an ad by its owner (set status to 'deleted')
 // @access  Private
 exports.deleteMyAd = async (req, res) => {
     try {
@@ -738,47 +810,16 @@ exports.deleteMyAd = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Ad not found or unauthorized' });
         }
 
-        // 1. Remove ad images from filesystem
-        if (ad.images && ad.images.length > 0) {
-            ad.images.forEach(img => {
-                if (img && !img.startsWith('data:') && !img.startsWith('http')) {
-                    const filePath = path.join(__dirname, '..', img);
-                    fs.unlink(filePath, (err) => {
-                        if (err && err.code !== 'ENOENT') console.error("Failed to delete ad image:", err);
-                    });
-                }
-            });
-        }
-
-        // 2. Find all messages linked to this ad to delete their images
-        const Message = require('../models/Message');
-        const Conversation = require('../models/Conversation');
-
-        const messagesWithImages = await Message.find({ ad: adId, image: { $ne: '' } });
-
-        // Delete message images from filesystem
-        messagesWithImages.forEach(msg => {
-            if (msg.image && !msg.image.startsWith('data:') && !msg.image.startsWith('http')) {
-                const filePath = path.join(__dirname, '..', msg.image);
-                fs.unlink(filePath, (err) => {
-                    if (err && err.code !== 'ENOENT') console.error("Failed to delete message image:", err);
-                });
-            }
-        });
-
-        // 3. Delete messages and conversations from database
-        await Message.deleteMany({ ad: adId });
-        await Conversation.deleteMany({ ad: adId });
-
-        // 4. Delete the ad itself
-        await ad.deleteOne();
+        // Instead of hard deleting, we set status to 'deleted'
+        ad.status = 'deleted';
+        await ad.save();
 
         res.json({
             success: true,
-            message: 'Ad and all associated messages/conversations deleted successfully'
+            message: 'Ad marked as deleted successfully'
         });
     } catch (err) {
-        console.error("Error deleting user ad:", err.message);
+        console.error("Error soft deleting user ad:", err.message);
         res.status(500).json({ success: false, message: 'Server Error' });
     }
 };
@@ -790,6 +831,8 @@ exports.promoteAd = async (req, res) => {
     try {
         const {
             promoteType,
+            trafficLink,
+            trafficButtonType,
             targetLocations,
             promoteDuration,
             promoteEndDate,
@@ -804,13 +847,25 @@ exports.promoteAd = async (req, res) => {
         }
 
         // Update ad fields
+        ad.status = 'active';
         ad.adType = 'Promoted';
         ad.promoteType = promoteType;
+        if (promoteType === 'traffic') {
+            ad.trafficLink = trafficLink;
+            ad.trafficButtonType = trafficButtonType;
+        } else {
+            ad.trafficLink = undefined;
+            ad.trafficButtonType = undefined;
+        }
         ad.targetLocations = targetLocations;
         ad.promoteDuration = promoteDuration;
         ad.promoteEndDate = promoteEndDate;
         ad.promoteBudget = promoteBudget;
         ad.estimatedReach = estimatedReach;
+
+        // Reset performance metrics for the new promotion
+        ad.promotedViews = 0;
+        ad.promotedDeliveryCount = 0;
 
         await ad.save();
 
@@ -988,6 +1043,42 @@ exports.markAdAsSeen = async (req, res) => {
         });
     } catch (err) {
         console.error("Error marking ad as seen:", err.message);
+        res.status(500).json({ success: false, message: 'Server Error' });
+    }
+};
+
+// @route   PUT api/ads/:id/toggle-status
+// @desc    Toggle user's own ad status between active and pause
+// @access  Private
+exports.toggleAdStatusMyAd = async (req, res) => {
+    try {
+        const ad = await Ad.findOne({ _id: req.params.id, user: req.user.id });
+        if (!ad) {
+            return res.status(404).json({ success: false, message: 'Ad not found or unauthorized' });
+        }
+
+        // Only allow toggling if it's currently active or paused
+        // We don't want to allow toggling from 'pending', 'rejected', 'deleted', etc.
+        if (ad.status === 'active') {
+            ad.status = 'pause';
+        } else if (ad.status === 'pause') {
+            ad.status = 'active';
+        } else {
+            return res.status(400).json({
+                success: false,
+                message: `Cannot toggle status from ${ad.status}. Ad must be Active or Paused.`
+            });
+        }
+
+        await ad.save();
+
+        res.json({
+            success: true,
+            message: `Ad is now ${ad.status === 'active' ? 'Active' : 'Paused'}`,
+            data: ad
+        });
+    } catch (err) {
+        console.error("Error toggling ad status:", err.message);
         res.status(500).json({ success: false, message: 'Server Error' });
     }
 };

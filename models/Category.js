@@ -14,6 +14,7 @@ const categorySchema = new mongoose.Schema({
     order: { type: Number, default: 0 },
     icon: { type: String },
     status: { type: Boolean, default: true },
+    subcategories: [{ type: mongoose.Schema.Types.ObjectId, ref: 'SubCategory' }],
     createdBy: {
         adminId: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
         adminName: String

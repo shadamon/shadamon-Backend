@@ -91,6 +91,7 @@ app.use((req, res, next) => {
 
 // Import new routes
 const messageRoutes = require('./routes/messageRoutes');
+const paymentRoutes = require('./routes/paymentRoutes');
 
 // Health check route
 app.get('/', (req, res) => {
@@ -110,6 +111,7 @@ app.use('/api/categories', categoryRoutes);
 app.use('/api/locations', locationRoutes);
 app.use('/api/premier-opportunity', premierOpportunityRoutes);
 app.use('/api/messages', messageRoutes);
+app.use('/api/payment', paymentRoutes);
 
 // 404 handler
 app.use((req, res) => {

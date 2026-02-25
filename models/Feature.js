@@ -7,6 +7,7 @@ const featureSchema = new mongoose.Schema({
     order: { type: Number, default: 0 },
     status: { type: Boolean, default: true },
     buttonType: { type: String },
+    selectionType: { type: String, enum: ['Single', 'Multi'], default: 'Single' },
     boxFadeName: { type: String },
     buttonItemNames: [{ type: String }],
 }, { timestamps: true });
