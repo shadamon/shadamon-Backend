@@ -93,7 +93,7 @@ const adSchema = new mongoose.Schema({
     },
     status: {
         type: String,
-        enum: ['active', 'pending', 'rejected', 'expired', 'notification', 'pause', 'review', 'atv_msg', 'unatv_msg', 'deleted'],
+        enum: ['active', 'pending', 'rejected', 'expired', 'notification', 'pause', 'review', 'atv_msg', 'unatv_msg', 'deleted', 'inactive'],
         default: 'active'
     },
     views: {

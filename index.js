@@ -10,6 +10,7 @@ const adRoutes = require('./routes/adRoutes');
 const categoryRoutes = require('./routes/categoryRoutes');
 const locationRoutes = require('./routes/locationRoutes');
 const premierOpportunityRoutes = require('./routes/premierOpportunityRoutes');
+const settingRoutes = require('./routes/settingRoutes');
 
 console.log('✅ Routes imported successfully');
 console.log('User routes:', typeof userRoutes);
@@ -112,6 +113,7 @@ app.use('/api/locations', locationRoutes);
 app.use('/api/premier-opportunity', premierOpportunityRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/payment', paymentRoutes);
+app.use('/api/settings', settingRoutes);
 
 // 404 handler
 app.use((req, res) => {
