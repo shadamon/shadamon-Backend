@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const Admin = require('../models/Admin');
 const User = require('../models/User');
 const Notification = require('../models/Notification');
@@ -168,7 +169,64 @@ const getUserCount = async (req, res) => {
 // @access  Private (Admin)
 const getAllUsers = async (req, res) => {
     try {
-        const users = await User.find().select('-password').sort({ createdAt: -1 });
+        const {
+            id,
+            mobile,
+            email,
+            category,
+            location,
+            status,
+            merchantType,
+            dateFrom,
+            dateTo
+        } = req.query;
+
+        let query = {};
+
+        if (id && id.trim()) {
+            if (mongoose.Types.ObjectId.isValid(id.trim())) {
+                query._id = id.trim();
+            } else {
+                return res.json([]); // Invalid ObjectID
+            }
+        }
+
+        if (mobile && mobile.trim()) {
+            query.mobile = { $regex: mobile.trim(), $options: 'i' };
+        }
+
+        if (email && email.trim()) {
+            query.email = { $regex: email.trim(), $options: 'i' };
+        }
+
+        if (category && category !== 'Select' && category !== 'Both' && category !== 'All') {
+            query.category = category;
+        }
+
+        if (location && location !== 'Select' && location !== 'All') {
+            query.location = location;
+        }
+
+        if (status && status !== 'Select') {
+            query.accountStatus = status;
+        }
+
+        if (merchantType && merchantType !== 'both' && merchantType !== 'All') {
+            if (merchantType === 'seller') {
+                query.merchantType = { $in: ['Premium', 'Free Saller'] };
+            } else if (merchantType === 'customer') {
+                query.merchantType = 'Free';
+            }
+        }
+
+        // Date filters for registration (createdAt)
+        if (dateFrom || dateTo) {
+            query.createdAt = {};
+            if (dateFrom) query.createdAt.$gte = new Date(dateFrom);
+            if (dateTo) query.createdAt.$lte = new Date(dateTo);
+        }
+
+        const users = await User.find(query).select('-password').sort({ createdAt: -1 });
         res.json(users);
     } catch (err) {
         console.error('Error fetching users:', err);
@@ -181,30 +239,45 @@ const getAllUsers = async (req, res) => {
 // @access  Private (Admin)
 const addUser = async (req, res) => {
     const {
-        name, email, password, dob, gender, mobile,
-        storeName, actionType, accountStatus, verifiedBy,
-        location, category, pageName, merchantType,
-        mVerified, merchantTrustStatus
+        name, email, password, dob, gender, mobile, mobileVerified,
+        storeName, accountStatus, verifiedBy,
+        location, category, sellerPageUrl, merchantType,
+        mVerified, merchantTrustStatus, rating,
+        education, currentJob, jobExperience, note,
+        additionalMobiles
     } = req.body;
 
     try {
-        const existingUser = await User.findOne({ email });
-        if (existingUser) {
-            return res.status(400).json({ message: 'User already exists' });
+        if (email) {
+            const existingUser = await User.findOne({ email });
+            if (existingUser) {
+                return res.status(400).json({ message: 'User with this email already exists' });
+            }
+        }
+
+        if (sellerPageUrl) {
+            const existingUrl = await User.findOne({ sellerPageUrl });
+            if (existingUrl) {
+                return res.status(400).json({ message: 'Page Username already in use' });
+            }
         }
 
         const newUser = new User({
             name, email, password, dob, gender, mobile,
-            storeName, actionType, accountStatus, verifiedBy,
-            location, category, pageName, merchantType,
+            mobileVerified: mobileVerified === 'true' || mobileVerified === true,
+            storeName, accountStatus, verifiedBy,
+            location, category, sellerPageUrl, merchantType,
             mVerified: mVerified === 'true' || mVerified === true,
             merchantTrustStatus: merchantTrustStatus || 'Untrusted',
+            rating: Number(rating) || 0,
+            education, currentJob, jobExperience, note,
+            additionalMobiles: Array.isArray(additionalMobiles) ? additionalMobiles : (additionalMobiles ? [additionalMobiles] : []),
 
-            photo: req.files?.photo ? fileToBase64(req.files.photo[0]) : processImageString(req.body.photo),
+            photo: req.files?.photo ? `uploads/${req.files.photo[0].filename}` : processImageString(req.body.photo),
             photoStatus: (req.files?.photo || req.body.photo) ? 'approved' : 'pending',
-            storeLogo: req.files?.storeLogo ? fileToBase64(req.files.storeLogo[0]) : processImageString(req.body.storeLogo),
+            storeLogo: req.files?.storeLogo ? `uploads/${req.files.storeLogo[0].filename}` : processImageString(req.body.storeLogo),
             storeLogoStatus: (req.files?.storeLogo || req.body.storeLogo) ? 'approved' : 'pending',
-            storeBanner: req.files?.storeBanner ? fileToBase64(req.files.storeBanner[0]) : processImageString(req.body.storeBanner),
+            storeBanner: req.files?.storeBanner ? `uploads/${req.files.storeBanner[0].filename}` : processImageString(req.body.storeBanner),
             storeBannerStatus: (req.files?.storeBanner || req.body.storeBanner) ? 'approved' : 'pending'
         });
 
@@ -224,11 +297,13 @@ const addUser = async (req, res) => {
 // @access  Private (Admin)
 const updateUser = async (req, res) => {
     const {
-        name, email, dob, gender, mobile,
-        storeName, actionType, accountStatus, verifiedBy,
-        location, category, pageName, merchantType, password,
+        name, email, dob, gender, mobile, mobileVerified,
+        storeName, accountStatus, verifiedBy,
+        location, category, sellerPageUrl, merchantType, password,
         storeLogoStatus, storeBannerStatus, photoStatus,
-        mVerified, merchantTrustStatus
+        mVerified, merchantTrustStatus, rating,
+        education, currentJob, jobExperience, note,
+        additionalMobiles
     } = req.body;
 
     try {
@@ -237,21 +312,36 @@ const updateUser = async (req, res) => {
             return res.status(404).json({ message: 'User not found' });
         }
 
+        if (sellerPageUrl && sellerPageUrl !== user.sellerPageUrl) {
+            const existingUrl = await User.findOne({ sellerPageUrl });
+            if (existingUrl) {
+                return res.status(400).json({ message: 'Page Username already in use' });
+            }
+        }
+
         // Update fields
         if (name) user.name = name;
         if (email) user.email = email;
         if (dob) user.dob = dob;
         if (gender) user.gender = gender;
         if (mobile) user.mobile = mobile;
+        if (mobileVerified !== undefined) user.mobileVerified = mobileVerified === 'true' || mobileVerified === true;
         if (storeName) user.storeName = storeName;
-        if (actionType) user.actionType = actionType;
         if (accountStatus) user.accountStatus = accountStatus;
         if (verifiedBy) user.verifiedBy = verifiedBy;
-        if (location) user.location = location;
-        if (category) user.category = category;
-        if (pageName) user.pageName = pageName;
+        if (location !== undefined) user.location = location;
+        if (category !== undefined) user.category = category;
+        if (sellerPageUrl !== undefined) user.sellerPageUrl = sellerPageUrl;
         if (mVerified !== undefined) user.mVerified = mVerified === 'true' || mVerified === true;
         if (merchantTrustStatus) user.merchantTrustStatus = merchantTrustStatus;
+        if (rating !== undefined) user.rating = Number(rating) || 0;
+        if (education !== undefined) user.education = education;
+        if (currentJob !== undefined) user.currentJob = currentJob;
+        if (jobExperience !== undefined) user.jobExperience = jobExperience;
+        if (note !== undefined) user.note = note;
+        if (additionalMobiles !== undefined) {
+            user.additionalMobiles = Array.isArray(additionalMobiles) ? additionalMobiles : (additionalMobiles ? [additionalMobiles] : []);
+        }
 
         if (merchantType) user.merchantType = merchantType;
         if (storeLogoStatus) user.storeLogoStatus = storeLogoStatus;
@@ -260,8 +350,8 @@ const updateUser = async (req, res) => {
 
         // Process images
         if (req.files?.photo) {
-            user.photo = fileToBase64(req.files.photo[0]);
-            user.photoStatus = 'approved'; // Admin upload is auto-approved
+            user.photo = `uploads/${req.files.photo[0].filename}`;
+            user.photoStatus = 'approved';
         } else if (req.body.photo && req.body.photo.startsWith('data:image')) {
             const processed = processImageString(req.body.photo);
             if (processed) {
@@ -271,7 +361,7 @@ const updateUser = async (req, res) => {
         }
 
         if (req.files?.storeLogo) {
-            user.storeLogo = fileToBase64(req.files.storeLogo[0]);
+            user.storeLogo = `uploads/${req.files.storeLogo[0].filename}`;
             user.storeLogoStatus = 'approved';
         } else if (req.body.storeLogo && req.body.storeLogo.startsWith('data:image')) {
             const processed = processImageString(req.body.storeLogo);
@@ -282,7 +372,7 @@ const updateUser = async (req, res) => {
         }
 
         if (req.files?.storeBanner) {
-            user.storeBanner = fileToBase64(req.files.storeBanner[0]);
+            user.storeBanner = `uploads/${req.files.storeBanner[0].filename}`;
             user.storeBannerStatus = 'approved';
         } else if (req.body.storeBanner && req.body.storeBanner.startsWith('data:image')) {
             const processed = processImageString(req.body.storeBanner);
@@ -560,6 +650,27 @@ const sendNotification = async (req, res) => {
     }
 };
 
+// @desc    Check if sellerPageUrl is available
+// @route   POST /api/admins/users/check-username
+// @access  Private (Admin)
+const checkUsername = async (req, res) => {
+    const { sellerPageUrl, userId } = req.body;
+    try {
+        if (!sellerPageUrl) return res.status(400).json({ message: 'URL is required' });
+
+        const query = { sellerPageUrl };
+        if (userId && userId !== 'null' && userId !== 'undefined') {
+            query._id = { $ne: userId };
+        }
+
+        const existingUser = await User.findOne(query);
+        res.json({ available: !existingUser });
+    } catch (err) {
+        console.error('Error checking username:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
 module.exports = {
     loginAdmin,
     getAllAdmins,
@@ -573,5 +684,6 @@ module.exports = {
     deleteUser,
     searchUsersByMobile,
     sendNotification,
-    getNotificationTargetCount // Export the new function
+    getNotificationTargetCount,
+    checkUsername
 };

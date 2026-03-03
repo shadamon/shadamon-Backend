@@ -12,7 +12,8 @@ const {
     deleteUser,
     searchUsersByMobile,
     getUserCount,
-    sendNotification
+    sendNotification,
+    checkUsername
 } = require('../controllers/adminController');
 const PromotionPlan = require('../models/PromotionPlan');
 const Ad = require('../models/Ad');
@@ -69,6 +70,9 @@ router.put('/users/:id', verifyToken, upload.fields([
 
 // @route   DELETE /api/admins/users/:id
 router.delete('/users/:id', verifyToken, deleteUser);
+
+// @route   POST /api/admins/users/check-username
+router.post('/users/check-username', verifyToken, checkUsername);
 
 // @route   POST /api/admins/notifications/send
 router.post('/notifications/send', verifyToken, sendNotification);
@@ -156,6 +160,12 @@ router.post('/manual-promote', verifyToken, async (req, res) => {
 
             ad.status = 'active';
             await ad.save();
+
+            // Automatically upgrade user to Premium when an ad is promoted manually
+            if (ad.user) {
+                await User.findByIdAndUpdate(ad.user, { merchantType: 'Premium' });
+                console.log(`✅ User ${ad.user} upgraded to Premium via manual ad promotion`);
+            }
         }
 
         // Handle Seller Verification Badge

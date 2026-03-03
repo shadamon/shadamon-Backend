@@ -114,6 +114,10 @@ const loginUser = async (req, res) => {
             return res.status(400).json({ message: 'Invalid credentials' });
         }
 
+        // Update lastLogin date
+        user.lastLogin = new Date();
+        await user.save();
+
         // Generate JWT token
         const token = jwt.sign(
             { id: user._id, email: user.email, role: 'user' },
@@ -306,6 +310,10 @@ const facebookLogin = async (req, res) => {
                 await user.save();
             }
 
+            // Update lastLogin date
+            user.lastLogin = new Date();
+            await user.save();
+
             // User exists - Log them in
             const token = jwt.sign(
                 { id: user._id, email: user.email, role: 'user' },
@@ -341,6 +349,7 @@ const facebookLogin = async (req, res) => {
                 photoStatus: pictureUrl ? 'approved' : undefined
             });
 
+            user.lastLogin = new Date();
             await user.save();
 
             const token = jwt.sign(
@@ -406,6 +415,10 @@ const googleLogin = async (req, res) => {
                 await user.save();
             }
 
+            // Update lastLogin date
+            user.lastLogin = new Date();
+            await user.save();
+
             // User exists - Log them in
             const jwtToken = jwt.sign(
                 { id: user._id, email: user.email, role: 'user' },
@@ -441,6 +454,7 @@ const googleLogin = async (req, res) => {
                 photoStatus: picture ? 'approved' : undefined
             });
 
+            user.lastLogin = new Date();
             await user.save();
 
             const jwtToken = jwt.sign(
@@ -704,7 +718,17 @@ const toggleNotifyPreference = async (req, res) => {
 // @access  Public
 const getPublicProfile = async (req, res) => {
     try {
-        const user = await User.findById(req.params.id).select('-password -accountStatus');
+        const idOrUsername = req.params.id;
+        let query = {};
+
+        // Check if it's a valid MongoDB ObjectId
+        if (idOrUsername.match(/^[0-9a-fA-F]{24}$/)) {
+            query = { _id: idOrUsername };
+        } else {
+            query = { sellerPageUrl: idOrUsername };
+        }
+
+        const user = await User.findOne(query).select('-password -accountStatus');
         if (!user) {
             return res.status(404).json({ message: 'User not found' });
         }

@@ -159,6 +159,14 @@ const successPayment = async (req, res) => {
                     promotedDeliveryCount: 0
                 });
 
+                // Automatically upgrade user to Premium when an ad is promoted
+                if (payment.user) {
+                    await User.findByIdAndUpdate(payment.user, {
+                        merchantType: 'Premium'
+                    });
+                    console.log(`✅ User ${payment.user} upgraded to Premium after promoting ad ${payment.ad}`);
+                }
+
                 console.log(`✅ Ad ${payment.ad} promoted and items updated after payment ${transactionId}`);
             }
 

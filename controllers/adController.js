@@ -230,7 +230,7 @@ exports.getAllAdsAdmin = async (req, res) => {
         );
 
         const ads = await Ad.find(query)
-            .populate('user', 'name email mobile storeLogo storeBanner merchantType mVerified') // Populate user details
+            .populate('user', 'name email mobile storeLogo storeBanner merchantType mVerified sellerPageUrl') // Populate user details
             .sort({ createdAt: -1 });
 
         res.json({
@@ -250,7 +250,7 @@ exports.getAllAdsAdmin = async (req, res) => {
 exports.getAllPromotedAdsAdmin = async (req, res) => {
     try {
         const ads = await Ad.find({ adType: 'Promoted' })
-            .populate('user', 'name email mobile storeLogo storeBanner merchantType mVerified')
+            .populate('user', 'name email mobile storeLogo storeBanner merchantType mVerified sellerPageUrl')
             .sort({ createdAt: -1 });
 
         res.json({
@@ -393,7 +393,13 @@ exports.updateAdDetails = async (req, res) => {
         if (additionalPhones) ad.additionalPhones = typeof additionalPhones === 'string' ? JSON.parse(additionalPhones) : additionalPhones;
         if (url !== undefined) ad.url = url;
         if (actionType) ad.actionType = actionType;
-        if (adType) ad.adType = adType;
+        if (adType) {
+            ad.adType = adType;
+            // If admin promotes an ad manually, upgrade the user to Premium
+            if (adType === 'Promoted' && ad.user) {
+                await User.findByIdAndUpdate(ad.user, { merchantType: 'Premium' });
+            }
+        }
         if (price !== undefined) {
             if (price === 'null' || price === null || price === '') {
                 ad.price = undefined;
@@ -532,7 +538,7 @@ exports.getAllAdsPublic = async (req, res) => {
         // Fetch active ads
         let adsQuery = Ad.find(query)
             .select('headline description features views price images location subLocation category subCategory createdAt deliveryCount user adType phone hidePhone additionalPhones')
-            .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType createdAt verifiedBy mVerified')
+            .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType createdAt verifiedBy mVerified sellerPageUrl')
             .sort(sortQuery);
 
         if (limit) {
@@ -943,6 +949,12 @@ exports.createAdAdmin = async (req, res) => {
         });
 
         const ad = await newAd.save();
+
+        // If admin creates a promoted ad, upgrade the user to Premium
+        if (newAd.adType === 'Promoted' && targetUser) {
+            await User.findByIdAndUpdate(targetUser._id, { merchantType: 'Premium' });
+            console.log(`✅ User ${targetUser._id} upgraded to Premium after admin created a promoted ad`);
+        }
 
         // Increment Category Post Count
         await Category.findOneAndUpdate(

@@ -85,6 +85,9 @@ const UserSchema = new mongoose.Schema({
     },
     // Extended Profile Fields
     education: { type: String },
+    currentJob: { type: String },
+    jobExperience: { type: String },
+    note: { type: String },
     aboutYourself: { type: String },
     profession: { type: String },
     professionalExperience: { type: String },
@@ -160,6 +163,9 @@ const UserSchema = new mongoose.Schema({
     profileViews: {
         type: Number,
         default: 0
+    },
+    lastLogin: {
+        type: Date
     }
 });
 
