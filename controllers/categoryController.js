@@ -156,8 +156,8 @@ exports.getAllSubCategories = async (req, res) => {
     try {
         const subCategories = await SubCategory.find()
             .populate('category', 'name')
-            .populate('features')
-            .sort({ createdAt: -1 });
+            .populate({ path: 'features', options: { sort: { 'order': 1 } } })
+            .sort({ order: 1 });
         res.json({ success: true, data: subCategories });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
@@ -176,11 +176,11 @@ exports.deleteSubCategory = async (req, res) => {
 // --- Feature Controllers ---
 exports.createFeature = async (req, res) => {
     try {
-        const { name, category, inputType, order, status, buttonType, selectionType, boxFadeName, buttonItemNames } = req.body;
+        const { name, subcategory, inputType, order, status, buttonType, selectionType, boxFadeName, buttonItemNames } = req.body;
 
         const feature = new Feature({
             name,
-            category,
+            subcategory,
             inputType,
             order,
             status: status === 'true' || status === true,
@@ -199,10 +199,10 @@ exports.createFeature = async (req, res) => {
 
 exports.updateFeature = async (req, res) => {
     try {
-        const { name, category, inputType, order, status, buttonType, selectionType, boxFadeName, buttonItemNames } = req.body;
+        const { name, subcategory, inputType, order, status, buttonType, selectionType, boxFadeName, buttonItemNames } = req.body;
         const updateData = {
             name,
-            category,
+            subcategory,
             inputType,
             order,
             status: status === 'true' || status === true,
@@ -221,7 +221,7 @@ exports.updateFeature = async (req, res) => {
 
 exports.getAllFeatures = async (req, res) => {
     try {
-        const features = await Feature.find().populate('category', 'name').sort({ order: 1 });
+        const features = await Feature.find().populate('subcategory', 'name').sort({ order: 1 });
         res.json({ success: true, data: features });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });

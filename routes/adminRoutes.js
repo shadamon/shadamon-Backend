@@ -13,11 +13,15 @@ const {
     searchUsersByMobile,
     getUserCount,
     sendNotification,
-    checkUsername
+    checkUsername,
+    getNotificationTargetCount,
+    getTransactions,
+    deleteTransaction
 } = require('../controllers/adminController');
 const PromotionPlan = require('../models/PromotionPlan');
 const Ad = require('../models/Ad');
 const User = require('../models/User');
+const Transaction = require('../models/Transaction');
 const { verifyToken, checkSuperAdmin } = require('../middleware/auth');
 const upload = require('../middleware/upload');
 
@@ -78,7 +82,14 @@ router.post('/users/check-username', verifyToken, checkUsername);
 router.post('/notifications/send', verifyToken, sendNotification);
 
 // @route   POST /api/admins/notifications/count
-router.post('/notifications/count', verifyToken, require('../controllers/adminController').getNotificationTargetCount);
+router.post('/notifications/count', verifyToken, getNotificationTargetCount);
+
+// --- Transaction Routes ---
+// @route   GET /api/admins/transactions
+router.get('/transactions', verifyToken, getTransactions);
+
+// @route   DELETE /api/admins/transactions/:id
+router.delete('/transactions/:id', verifyToken, deleteTransaction);
 
 // --- Promotion Plan Routes ---
 
@@ -166,6 +177,22 @@ router.post('/manual-promote', verifyToken, async (req, res) => {
                 await User.findByIdAndUpdate(ad.user, { merchantType: 'Premium' });
                 console.log(`✅ User ${ad.user} upgraded to Premium via manual ad promotion`);
             }
+
+            // Record Transaction for Ad Promotion
+            const adOwner = await User.findById(ad.user);
+            const transaction = new Transaction({
+                tnxId: `ADMIN-AD-${Date.now()}`,
+                mode: 'Admin',
+                sellerId: ad.user,
+                productId: ad._id,
+                mobileNumber: adOwner?.mobile || ad.phone,
+                amount: Number(amount) || 0,
+                payType: 'Admin',
+                payeeName: adOwner?.name || 'Admin',
+                item: level || 'Manual Promotion',
+                status: 'VALID'
+            });
+            await transaction.save();
         }
 
         // Handle Seller Verification Badge
@@ -181,6 +208,20 @@ router.post('/manual-promote', verifyToken, async (req, res) => {
                     user.merchantTrustStatus = 'Untrusted';
                 }
                 await user.save();
+
+                // Record Transaction for Seller Verification
+                const transaction = new Transaction({
+                    tnxId: `ADMIN-VERIFY-${Date.now()}`,
+                    mode: 'Admin',
+                    sellerId: user._id,
+                    mobileNumber: user.mobile,
+                    amount: Number(amount) || 0,
+                    payType: 'Admin',
+                    payeeName: user.name,
+                    item: 'Verify Badge',
+                    status: 'VALID'
+                });
+                await transaction.save();
             } else {
                 if (!productId) {
                     return res.status(404).json({ message: 'User not found' });

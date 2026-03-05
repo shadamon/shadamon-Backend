@@ -1,5 +1,6 @@
 const Ad = require('../models/Ad');
 const Category = require('../models/Category');
+const SubCategory = require('../models/SubCategory');
 const Location = require('../models/Location');
 const fs = require('fs');
 const path = require('path');
@@ -51,38 +52,42 @@ exports.createAd = async (req, res) => {
 
         let adStatus = 'active';
         let limitReached = false;
-        let freeAdLimit = 0;
+        let subCategoryFreeLimit = 1; // Default fallback
 
         if (userId) {
             const user = await User.findById(userId);
             if (user) {
-                // Default pause for Untrusted or missing trust status
+                // Default pause for Untrusted or missing trust status (moderation)
                 if (user.merchantTrustStatus !== 'Trusted') {
                     adStatus = 'pause';
                 }
 
-                // Check free ad limit for non-premium users
+                // Check Category-specific free post limit for non-premium users
                 if (user.merchantType === 'Free') {
-                    freeAdLimit = user.freeAdLimit || 5;
-                    const activeAdCount = await Ad.countDocuments({
-                        user: userId,
-                        status: { $in: ['active', 'pending', 'pause', 'review'] }
-                    });
+                    const subCategoryDoc = await SubCategory.findOne({ name: subCategory });
+                    if (subCategoryDoc) {
+                        subCategoryFreeLimit = subCategoryDoc.freePost || 1;
+                        const activeAdCountInSubCategory = await Ad.countDocuments({
+                            user: userId,
+                            subCategory,
+                            status: { $in: ['active', 'pending', 'pause', 'review'] }
+                        });
 
-                    if (activeAdCount >= freeAdLimit) {
-                        adStatus = 'pause';
-                        limitReached = true;
+                        if (activeAdCountInSubCategory >= subCategoryFreeLimit) {
+                            adStatus = 'pause';
+                            limitReached = true;
+                        }
                     }
                 }
 
-                // Override: Trusted users always get published directly
+                // Override: Trusted users always get published directly, bypassing all limits
                 if (user.merchantTrustStatus === 'Trusted') {
                     adStatus = 'active';
                     limitReached = false;
                 }
             }
         } else {
-            // Anonymous users are treated as untrusted
+            // Anonymous users are treated as untrusted and moderated
             adStatus = 'pause';
         }
 
@@ -197,7 +202,7 @@ exports.createAd = async (req, res) => {
             message: 'Ad posted successfully',
             data: ad,
             limitReached,
-            limit: freeAdLimit
+            limit: subCategoryFreeLimit
         });
     } catch (err) {
         console.error("Error creating ad:", err.message);
@@ -792,11 +797,32 @@ exports.updateMyAd = async (req, res) => {
             }
         });
 
+        // Check for limit if subCategory is changed for an active/pending ad
+        if (subCategory !== undefined && subCategory !== ad.subCategory && ['active', 'pending'].includes(ad.status)) {
+            const user = await User.findById(req.user.id);
+            if (user && user.merchantTrustStatus !== 'Trusted') {
+                const subCatDoc = await SubCategory.findOne({ name: subCategory });
+                const freePostLimit = subCatDoc ? (subCatDoc.freePost || 1) : 1;
+
+                const activeAdCountInSubCategory = await Ad.countDocuments({
+                    user: req.user.id,
+                    subCategory: subCategory,
+                    _id: { $ne: ad._id }, // Exclude current ad
+                    status: { $in: ['active', 'pending', 'pause', 'review'] }
+                });
+
+                if (activeAdCountInSubCategory >= freePostLimit) {
+                    ad.status = 'pause';
+                    res.message = `Ad updated but paused because the ${subCategory} category limit (${freePostLimit}) is reached.`;
+                }
+            }
+        }
+
         await ad.save();
 
         res.json({
             success: true,
-            message: 'Ad updated successfully',
+            message: res.message || 'Ad updated successfully',
             data: ad
         });
     } catch (err) {
@@ -1074,6 +1100,25 @@ exports.toggleAdStatusMyAd = async (req, res) => {
         if (ad.status === 'active') {
             ad.status = 'pause';
         } else if (ad.status === 'pause') {
+            // Check for limit if trying to activate
+            const user = await User.findById(req.user.id);
+            if (user && user.merchantTrustStatus !== 'Trusted') {
+                const subCatDoc = await SubCategory.findOne({ name: ad.subCategory });
+                const freePostLimit = subCatDoc ? (subCatDoc.freePost || 1) : 1;
+
+                const activeAdCountInSubCategory = await Ad.countDocuments({
+                    user: req.user.id,
+                    subCategory: ad.subCategory,
+                    status: 'active'
+                });
+
+                if (activeAdCountInSubCategory >= freePostLimit) {
+                    return res.status(400).json({
+                        success: false,
+                        message: `Limit reached for ${ad.subCategory}. You can have maximum ${freePostLimit} active ads in this category.`
+                    });
+                }
+            }
             ad.status = 'active';
         } else {
             return res.status(400).json({

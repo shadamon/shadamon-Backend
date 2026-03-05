@@ -79,10 +79,7 @@ const UserSchema = new mongoose.Schema({
         enum: ['Trusted', 'Untrusted'],
         default: 'Untrusted'
     },
-    freeAdLimit: {
-        type: Number,
-        default: 5
-    },
+
     // Extended Profile Fields
     education: { type: String },
     currentJob: { type: String },

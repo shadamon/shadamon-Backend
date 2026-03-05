@@ -126,7 +126,7 @@ exports.getAllSubLocations = async (req, res) => {
     try {
         const subLocations = await SubLocation.find()
             .populate('location', 'name')
-            .sort({ createdAt: -1 });
+            .sort({ order: 1 });
         res.json({ success: true, data: subLocations });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });

@@ -1,8 +1,9 @@
 const SSLCommerzPayment = require('sslcommerz-lts');
 const Payment = require('../models/Payment');
 const Ad = require('../models/Ad');
-const User = require('../models/User'); // Add User model import at top
+const User = require('../models/User');
 const mongoose = require('mongoose');
+const Transaction = require('../models/Transaction');
 
 // SSL Commerz Configuration
 const getSslConfig = () => ({
@@ -78,6 +79,21 @@ const initPayment = async (req, res) => {
             });
             await newPayment.save();
 
+            // Record in Transaction collection (PENDING)
+            const newTransaction = new Transaction({
+                tnxId: transactionId,
+                mode: 'Online',
+                sellerId: userId,
+                productId: adId,
+                mobileNumber: userMobile,
+                amount: totalAmount,
+                payType: 'Online',
+                payeeName: userName,
+                item: promotionDetails?.paymentType === 'verification' || promotionDetails?.isVerifyBadge ? 'Verify Badge' : 'Ad Promotion',
+                status: 'PENDING'
+            });
+            await newTransaction.save();
+
             res.status(200).json({ success: true, url: GatewayPageURL });
         } else {
             console.error("SSL Commerz Init Failed. Response:", apiResponse);
@@ -113,6 +129,16 @@ const successPayment = async (req, res) => {
                     paymentDetails: paymentData
                 },
                 { new: true }
+            );
+
+            // Update Transaction to VALID
+            await Transaction.findOneAndUpdate(
+                { tnxId: transactionId },
+                {
+                    status: 'VALID',
+                    payType: paymentData.card_type || paymentData.method || 'Online',
+                    payTime: new Date()
+                }
             );
 
             // Update Ad Promotion Status (if ad exists)
@@ -205,6 +231,12 @@ const failPayment = async (req, res) => {
             }
         );
 
+        // Update Transaction to FAILED
+        await Transaction.findOneAndUpdate(
+            { tnxId: transactionId },
+            { status: 'FAILED' }
+        );
+
         res.redirect(`${process.env.FRONTEND_URL}/payment/status?status=failed&txnId=${transactionId}`);
     } catch (error) {
         console.error("Payment Fail Callback Error:", error);
@@ -223,6 +255,12 @@ const cancelPayment = async (req, res) => {
                 status: 'CANCELLED',
                 paymentDetails: paymentData
             }
+        );
+
+        // Update Transaction to CANCELLED
+        await Transaction.findOneAndUpdate(
+            { tnxId: transactionId },
+            { status: 'CANCELLED' }
         );
 
         res.redirect(`${process.env.FRONTEND_URL}/payment/status?status=cancelled&txnId=${transactionId}`);
