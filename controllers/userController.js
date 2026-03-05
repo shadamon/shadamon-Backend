@@ -2,7 +2,7 @@ const User = require('../models/User');
 const Notification = require('../models/Notification');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const { fileToBase64 } = require('../utils/imageHelper');
+const { fileToBase64, downloadAndSaveImage } = require('../utils/imageHelper');
 
 // @desc    Register a new user
 // @route   POST /api/user/register
@@ -303,11 +303,14 @@ const facebookLogin = async (req, res) => {
         let user = await User.findOne({ email });
 
         if (user) {
-            // Update photo if missing
+            // Update photo if missing (and download it)
             if (!user.photo && pictureUrl) {
-                user.photo = pictureUrl;
-                if (!user.photoStatus) user.photoStatus = 'approved';
-                await user.save();
+                const localPath = await downloadAndSaveImage(pictureUrl);
+                if (localPath) {
+                    user.photo = localPath;
+                    if (!user.photoStatus) user.photoStatus = 'approved';
+                    await user.save();
+                }
             }
 
             // Update lastLogin date
@@ -337,6 +340,7 @@ const facebookLogin = async (req, res) => {
         } else {
             // User does not exist - Create new user
             const randomPassword = Math.random().toString(36).slice(-8) + Math.random().toString(36).slice(-8);
+            const localPath = await downloadAndSaveImage(pictureUrl);
 
             user = new User({
                 name,
@@ -345,8 +349,8 @@ const facebookLogin = async (req, res) => {
                 verifiedBy: 'Facebook',
                 accountStatus: 'review',
                 merchantType: 'Free',
-                photo: pictureUrl,
-                photoStatus: pictureUrl ? 'approved' : undefined
+                photo: localPath || undefined,
+                photoStatus: localPath ? 'approved' : undefined
             });
 
             user.lastLogin = new Date();
@@ -396,11 +400,14 @@ const googleLogin = async (req, res) => {
         let user = await User.findOne({ email });
 
         if (user) {
-            // Update photo if missing
+            // Update photo if missing (and download it)
             if (!user.photo && picture) {
-                user.photo = picture;
-                if (!user.photoStatus) user.photoStatus = 'approved';
-                await user.save();
+                const localPath = await downloadAndSaveImage(picture);
+                if (localPath) {
+                    user.photo = localPath;
+                    if (!user.photoStatus) user.photoStatus = 'approved';
+                    await user.save();
+                }
             }
 
             // If user verifiedBy is 'Not Verified' (e.g. email/mobile not verified yet), update it?
@@ -442,6 +449,7 @@ const googleLogin = async (req, res) => {
         } else {
             // User does not exist - Create new user
             const randomPassword = Math.random().toString(36).slice(-8) + Math.random().toString(36).slice(-8);
+            const localPath = await downloadAndSaveImage(picture);
 
             user = new User({
                 name,
@@ -450,8 +458,8 @@ const googleLogin = async (req, res) => {
                 verifiedBy: 'Google',
                 accountStatus: 'review',
                 merchantType: 'Free',
-                photo: picture,
-                photoStatus: picture ? 'approved' : undefined
+                photo: localPath || undefined,
+                photoStatus: localPath ? 'approved' : undefined
             });
 
             user.lastLogin = new Date();
@@ -617,6 +625,17 @@ const checkMobile = async (req, res) => {
         res.json({ exists: !!user });
     } catch (err) {
         console.error('Error checking mobile:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+const checkEmail = async (req, res) => {
+    const { email } = req.body;
+    try {
+        const user = await User.findOne({ email });
+        res.json({ exists: !!user });
+    } catch (err) {
+        console.error('Error checking email:', err);
         res.status(500).json({ message: 'Server error' });
     }
 };
@@ -933,6 +952,7 @@ module.exports = {
     addNotifyPreference,
     removeNotifyPreference,
     checkMobile,
+    checkEmail,
     followUser,
     getNotifications,
     markNotificationAsRead,

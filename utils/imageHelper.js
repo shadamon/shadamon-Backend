@@ -1,3 +1,8 @@
+const fs = require('fs');
+const path = require('path');
+const axios = require('axios');
+const sharp = require('sharp');
+
 /**
  * Converts a file buffer to a base64 Data URI string.
  * @param {Object} file - The file object from multer (must have buffer and mimetype).
@@ -20,4 +25,40 @@ const processImageString = (str) => {
     return `data:image/jpeg;base64,${str}`;
 };
 
-module.exports = { fileToBase64, processImageString };
+/**
+ * Downloads an image from a URL and saves it to the uploads folder as WebP.
+ * @param {string} url - The external image URL.
+ * @returns {Promise<string|null>} - The local path to the saved image.
+ */
+const downloadAndSaveImage = async (url) => {
+    if (!url) return null;
+    try {
+        const response = await axios({
+            url,
+            method: 'GET',
+            responseType: 'arraybuffer'
+        });
+
+        const buffer = Buffer.from(response.data);
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        const fileName = `profile-${uniqueSuffix}.webp`;
+        const uploadDir = path.join(__dirname, '..', 'uploads');
+
+        if (!fs.existsSync(uploadDir)) {
+            fs.mkdirSync(uploadDir, { recursive: true });
+        }
+
+        const filePath = path.join(uploadDir, fileName);
+
+        await sharp(buffer)
+            .webp({ quality: 80 })
+            .toFile(filePath);
+
+        return `uploads/${fileName}`;
+    } catch (err) {
+        console.error('Error downloading/saving image:', err.message);
+        return null;
+    }
+};
+
+module.exports = { fileToBase64, processImageString, downloadAndSaveImage };

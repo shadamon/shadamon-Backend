@@ -230,7 +230,7 @@ exports.getAllAdsAdmin = async (req, res) => {
         );
 
         const ads = await Ad.find(query)
-            .populate('user', 'name email mobile storeLogo storeBanner merchantType mVerified sellerPageUrl') // Populate user details
+            .populate('user', 'name email mobile storeLogo storeBanner merchantType mVerified merchantTrustStatus sellerPageUrl') // Populate user details
             .sort({ createdAt: -1 });
 
         res.json({

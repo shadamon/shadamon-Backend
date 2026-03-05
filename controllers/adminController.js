@@ -263,10 +263,12 @@ const addUser = async (req, res) => {
         }
 
         const newUser = new User({
-            name, email, password, dob, gender, mobile,
+            name, email: email || undefined, password, dob, gender, mobile,
             mobileVerified: mobileVerified === 'true' || mobileVerified === true,
             storeName, accountStatus, verifiedBy,
-            location, category, sellerPageUrl, merchantType,
+            location, category,
+            sellerPageUrl: sellerPageUrl || undefined,
+            merchantType,
             mVerified: mVerified === 'true' || mVerified === true,
             merchantTrustStatus: merchantTrustStatus || 'Untrusted',
             rating: Number(rating) || 0,
@@ -321,7 +323,7 @@ const updateUser = async (req, res) => {
 
         // Update fields
         if (name) user.name = name;
-        if (email) user.email = email;
+        if (email !== undefined) user.email = email || undefined;
         if (dob) user.dob = dob;
         if (gender) user.gender = gender;
         if (mobile) user.mobile = mobile;
@@ -331,7 +333,9 @@ const updateUser = async (req, res) => {
         if (verifiedBy) user.verifiedBy = verifiedBy;
         if (location !== undefined) user.location = location;
         if (category !== undefined) user.category = category;
-        if (sellerPageUrl !== undefined) user.sellerPageUrl = sellerPageUrl;
+        if (sellerPageUrl !== undefined) {
+            user.sellerPageUrl = sellerPageUrl || undefined;
+        }
         if (mVerified !== undefined) user.mVerified = mVerified === 'true' || mVerified === true;
         if (merchantTrustStatus) user.merchantTrustStatus = merchantTrustStatus;
         if (rating !== undefined) user.rating = Number(rating) || 0;
