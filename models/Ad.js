@@ -14,6 +14,12 @@ const adSchema = new mongoose.Schema({
         type: String,
         required: true
     },
+    pendingDescription: {
+        type: String
+    },
+    pendingImages: {
+        type: [String]
+    },
     category: {
         type: String,
         required: false

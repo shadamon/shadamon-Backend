@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const Ad = require('../models/Ad');
 const Category = require('../models/Category');
 const SubCategory = require('../models/SubCategory');
@@ -8,6 +9,7 @@ const path = require('path');
 
 const User = require('../models/User'); // Import User model
 const PromotionPlan = require('../models/PromotionPlan'); // Import PromotionPlan model
+const Setting = require('../models/Setting'); // Import Setting model
 
 // @route   POST api/ads
 // @desc    Create a new ad
@@ -59,7 +61,7 @@ exports.createAd = async (req, res) => {
             if (user) {
                 // Default pause for Untrusted or missing trust status (moderation)
                 if (user.merchantTrustStatus !== 'Trusted') {
-                    adStatus = 'pause';
+                    adStatus = 'review';
                 }
 
                 // Check Category-specific free post limit for non-premium users
@@ -112,6 +114,13 @@ exports.createAd = async (req, res) => {
             features: features ? (typeof features === 'string' ? JSON.parse(features) : features) : {},
             status: adStatus
         });
+
+        // Set showTill based on settings
+        const settings = await Setting.findOne();
+        const inactiveDays = settings ? settings.productAutoInactiveTime : 90;
+        const showTill = new Date();
+        showTill.setDate(showTill.getDate() + inactiveDays);
+        newAd.showTill = showTill;
 
         const ad = await newAd.save();
 
@@ -211,31 +220,110 @@ exports.createAd = async (req, res) => {
 };
 
 // @route   GET api/ads/admin/all
-// @desc    Get all ads for admin (can filter by adType='Promoted' to get promoted only)
+// @desc    Get all ads for admin with extensive filtering
 // @access  Private (Admin)
 exports.getAllAdsAdmin = async (req, res) => {
     try {
-        const { adType } = req.query;
+        const {
+            adType,
+            _id,
+            mobile,
+            email,
+            status,
+            userUpdated,
+            packages,
+            condition,
+            category,
+            subCategory,
+            photoStatus,
+            dateFrom,
+            dateTo,
+            promoteTag,
+            featureName,
+            featureValue,
+            subLocation,
+            actionType
+        } = req.query;
+
         let query = {};
-        if (adType) {
-            query.adType = adType;
+
+        // basic fields
+        if (adType) query.adType = adType;
+        if (_id && mongoose.Types.ObjectId.isValid(_id)) query._id = _id;
+        if (status) query.status = status;
+        if (userUpdated !== undefined) query.userUpdated = userUpdated === 'true';
+        if (category) query.category = category;
+        if (subCategory) query.subCategory = subCategory;
+        if (subLocation) query.subLocation = subLocation;
+        if (photoStatus) query.photoStatus = photoStatus;
+        if (actionType) query.actionType = actionType;
+        if (promoteTag) query.promoteTag = promoteTag;
+
+        // Dynamic Feature Search
+        if (featureName && featureValue) {
+            query[`features.${featureName}`] = featureValue;
+        }
+
+        // Packages logic
+        if (packages) {
+            if (packages === 'Free') {
+                query.adType = 'Free';
+            } else if (packages === 'Today') {
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                query.adType = 'Promoted';
+                query.createdAt = { $gte: today };
+            } else if (packages === 'Running') {
+                query.adType = 'Promoted';
+                query.status = 'active';
+            }
+        }
+
+        // Feature search (Condition is a common feature)
+        if (condition) {
+            query['features.Condition'] = condition;
+        }
+
+        // Date range
+        if (dateFrom || dateTo) {
+            query.createdAt = {};
+            if (dateFrom) query.createdAt.$gte = new Date(dateFrom);
+            if (dateTo) {
+                const dTo = new Date(dateTo);
+                dTo.setHours(23, 59, 59, 999);
+                query.createdAt.$lte = dTo;
+            }
+        }
+
+        // User related fields (mobile, email)
+        if (mobile || email) {
+            let userQuery = {};
+            if (mobile) userQuery.mobile = new RegExp(mobile, 'i');
+            if (email) userQuery.email = new RegExp(email, 'i');
+
+            const users = await User.find(userQuery).select('_id');
+            const userIds = users.map(u => u._id);
+            query.user = { $in: userIds };
         }
 
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
         // Reset ads that haven't been seen today for both delivery and views
-        await Ad.updateMany(
-            { lastDeliveryDate: { $lt: today } },
-            { $set: { dailyDeliveryCount: 0, lastDeliveryDate: today } }
-        );
-        await Ad.updateMany(
-            { lastViewsDate: { $lt: today } },
-            { $set: { dailyViewsCount: 0, lastViewsDate: today } }
-        );
+        // Only run this if we are fetching all ads or a large set to avoid too many updates
+        if (!adType && !Object.keys(req.query).length) {
+            await Ad.updateMany(
+                { lastDeliveryDate: { $lt: today } },
+                { $set: { dailyDeliveryCount: 0, lastDeliveryDate: today } }
+            );
+            await Ad.updateMany(
+                { lastViewsDate: { $lt: today } },
+                { $set: { dailyViewsCount: 0, lastViewsDate: today } }
+            );
+        }
 
         const ads = await Ad.find(query)
-            .populate('user', 'name email mobile storeLogo storeBanner merchantType mVerified merchantTrustStatus sellerPageUrl') // Populate user details
+            .populate('user', 'name email mobile storeLogo storeBanner merchantType mVerified merchantTrustStatus sellerPageUrl')
             .sort({ createdAt: -1 });
 
         res.json({
@@ -377,7 +465,8 @@ exports.updateAdDetails = async (req, res) => {
             photoStatus,
             priceType,
             status,
-            features
+            features,
+            pendingDescriptionAction // 'accept' or 'decline'
         } = req.body;
 
         const ad = await Ad.findById(req.params.id);
@@ -416,7 +505,16 @@ exports.updateAdDetails = async (req, res) => {
         if (pwrTarget !== undefined) ad.pwrTarget = typeof pwrTarget === 'string' ? JSON.parse(pwrTarget) : pwrTarget;
         if (targetD !== undefined) ad.targetD = targetD;
         if (notificationDialogue !== undefined) ad.notificationDialogue = notificationDialogue;
-        if (showTill !== undefined) ad.showTill = showTill;
+        if (showTill) {
+            ad.showTill = showTill;
+        } else if (!ad.showTill) {
+            // Auto-repair if missing or cleared
+            const settings = await Setting.findOne();
+            const inactiveDays = settings ? (settings.productAutoInactiveTime || 90) : 90;
+            const tillDate = new Date();
+            tillDate.setDate(tillDate.getDate() + inactiveDays);
+            ad.showTill = tillDate;
+        }
         if (rep !== undefined) ad.rep = rep;
         if (lgs !== undefined) ad.lgs = lgs;
         if (senBy !== undefined) ad.senBy = senBy;
@@ -430,10 +528,35 @@ exports.updateAdDetails = async (req, res) => {
         }
         if (note !== undefined) ad.note = note;
         if (targetValue !== undefined) ad.targetValue = targetValue;
-        if (photoStatus !== undefined) ad.photoStatus = photoStatus;
+        if (photoStatus !== undefined) {
+            ad.photoStatus = photoStatus;
+            if (photoStatus === 'approved') {
+                if (ad.pendingImages && ad.pendingImages.length > 0) {
+                    ad.images = ad.pendingImages;
+                    ad.pendingImages = [];
+                }
+                ad.userNewPhotos = false;
+            } else if (photoStatus === 'rejected') {
+                ad.pendingImages = [];
+                ad.userNewPhotos = false;
+            }
+        }
         if (priceType !== undefined) ad.priceType = priceType;
         if (status !== undefined) ad.status = status;
         if (features !== undefined) ad.features = typeof features === 'string' ? JSON.parse(features) : features;
+        if (req.body.pendingDescription !== undefined) ad.pendingDescription = req.body.pendingDescription;
+
+        // Accept/Decline Pending Description
+        if (pendingDescriptionAction === 'accept' && ad.pendingDescription) {
+            ad.description = ad.pendingDescription;
+            ad.pendingDescription = undefined;
+            ad.userUpdated = false; // Reset the flag once moderated
+            if (ad.status === 'review') ad.status = 'active'; // Restore visibility if it was in review due to edit
+        } else if (pendingDescriptionAction === 'decline') {
+            ad.pendingDescription = undefined;
+            ad.userUpdated = false;
+            if (ad.status === 'review') ad.status = 'active'; // Restore even if declined
+        }
 
         // Process images: Combine remaining (existing) images + new uploads
         let currentImages = [];
@@ -736,9 +859,19 @@ exports.updateMyAd = async (req, res) => {
         let isDetailsModified = false;
         let isPhotosModified = false;
 
+        const user = await User.findById(req.user.id);
+        const isTrusted = user && user.merchantTrustStatus === 'Trusted';
+
         // Check for details modification
-        if (headline && headline !== ad.headline) { ad.headline = headline; isDetailsModified = true; }
-        if (description && description !== ad.description) { ad.description = description; isDetailsModified = true; }
+        if (headline && headline !== ad.headline) {
+            ad.headline = headline;
+            isDetailsModified = true;
+        }
+
+        if (description && description !== ad.description) {
+            ad.pendingDescription = description;
+            isDetailsModified = true;
+        }
         if (category && category !== ad.category) { ad.category = category; isDetailsModified = true; }
         if (subCategory !== undefined && subCategory !== ad.subCategory) { ad.subCategory = subCategory; isDetailsModified = true; }
         if (location && location !== ad.location) { ad.location = location; isDetailsModified = true; }
@@ -752,6 +885,14 @@ exports.updateMyAd = async (req, res) => {
         if (price !== undefined && price !== ad.price) { ad.price = price; isDetailsModified = true; }
         if (priceType !== undefined && priceType !== ad.priceType) { ad.priceType = priceType; isDetailsModified = true; }
         if (features !== undefined) { ad.features = typeof features === 'string' ? JSON.parse(features) : features; isDetailsModified = true; }
+
+        // Set status to review if any detail modified (except for Promoted ads)
+        if (isDetailsModified) {
+            if (ad.adType !== 'Promoted') {
+                ad.status = 'review';
+            }
+            ad.userUpdated = true;
+        }
 
         // Process images
         let currentImages = [];
@@ -780,14 +921,22 @@ exports.updateMyAd = async (req, res) => {
             newAdImages = currentImages.slice(0, 5);
         }
 
-        ad.images = newAdImages;
+        // Apply Moderation: Any user photo edit goes to review (except for Promoted ads)
+        if (isPhotosModified || (req.body.remainingImages && currentImages.length !== oldImages.length)) {
+            ad.pendingImages = newAdImages;
+            ad.userNewPhotos = true;
+            ad.photoStatus = 'pending';
+            if (ad.adType !== 'Promoted') {
+                ad.status = 'review';
+            }
+            // Active images remain as oldImages until approved
+        }
 
         // Set flags for Admin if modified by User
         if (isDetailsModified) ad.userUpdated = true;
-        if (isPhotosModified) ad.userNewPhotos = true;
 
-        // Delete removed images from filesystem
-        const deletedImages = oldImages.filter(img => !newAdImages.includes(img));
+        // Delete removed images from filesystem (only those NOT in either current or pending)
+        const deletedImages = oldImages.filter(img => !newAdImages.includes(img) && !ad.images.includes(img) && !(ad.pendingImages || []).includes(img));
         deletedImages.forEach(img => {
             if (img && !img.startsWith('data:') && !img.startsWith('http')) {
                 const filePath = path.join(__dirname, '..', img);
@@ -816,6 +965,15 @@ exports.updateMyAd = async (req, res) => {
                     res.message = `Ad updated but paused because the ${subCategory} category limit (${freePostLimit}) is reached.`;
                 }
             }
+        }
+
+        // Ensure showTill exists
+        if (!ad.showTill) {
+            const settings = await Setting.findOne();
+            const inactiveDays = settings ? (settings.productAutoInactiveTime || 90) : 90;
+            const tillDate = new Date(ad.createdAt || new Date());
+            tillDate.setDate(tillDate.getDate() + inactiveDays);
+            ad.showTill = tillDate;
         }
 
         await ad.save();
@@ -895,6 +1053,13 @@ exports.promoteAd = async (req, res) => {
         ad.promoteBudget = promoteBudget;
         ad.estimatedReach = estimatedReach;
 
+        // Update showTill: promoteEndDate + setting inactive time
+        const settings = await Setting.findOne();
+        const inactiveDays = settings ? settings.productAutoInactiveTime : 90;
+        const newShowTill = new Date(promoteEndDate);
+        newShowTill.setDate(newShowTill.getDate() + inactiveDays);
+        ad.showTill = newShowTill;
+
         // Reset performance metrics for the new promotion
         ad.promotedViews = 0;
         ad.promotedDeliveryCount = 0;
@@ -932,6 +1097,7 @@ exports.createAdAdmin = async (req, res) => {
             adType,
             price,
             merchantID,
+            priceType,
             showTill,
             note,
             features
@@ -951,6 +1117,16 @@ exports.createAdAdmin = async (req, res) => {
         let imagePaths = req.files ? req.files.map(file => file.path.replace(/\\/g, "/")) : [];
         // Removed base64 image processing
 
+        // Calculate showTill if not provided
+        let finalShowTill = showTill;
+        if (!finalShowTill) {
+            const settings = await Setting.findOne();
+            const inactiveDays = settings ? (settings.productAutoInactiveTime || 90) : 90;
+            const tillDate = new Date();
+            tillDate.setDate(tillDate.getDate() + inactiveDays);
+            finalShowTill = tillDate;
+        }
+
         const newAd = new Ad({
             user: targetUser ? targetUser._id : (req.admin ? req.admin.id : null),
             headline,
@@ -967,8 +1143,9 @@ exports.createAdAdmin = async (req, res) => {
             images: imagePaths,
             adType: adType || 'Free',
             price,
+            priceType: priceType || 'Negotiable',
             merchantID,
-            showTill,
+            showTill: finalShowTill,
             note,
             features: features ? (typeof features === 'string' ? JSON.parse(features) : features) : {},
             status: req.body.status || 'active'

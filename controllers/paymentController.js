@@ -4,6 +4,7 @@ const Ad = require('../models/Ad');
 const User = require('../models/User');
 const mongoose = require('mongoose');
 const Transaction = require('../models/Transaction');
+const Setting = require('../models/Setting');
 
 // SSL Commerz Configuration
 const getSslConfig = () => ({
@@ -167,6 +168,12 @@ const successPayment = async (req, res) => {
                     else promoteTag = 'Highlights';
                 }
 
+                // Calculate new showTill: promoteEndDate + setting inactive time
+                const settings = await Setting.findOne();
+                const inactiveDays = settings ? settings.productAutoInactiveTime : 90;
+                const newShowTill = new Date(promoteEndDate);
+                newShowTill.setDate(newShowTill.getDate() + inactiveDays);
+
                 await Ad.findByIdAndUpdate(payment.ad, {
                     adType: 'Promoted',
                     promoteType,
@@ -178,6 +185,7 @@ const successPayment = async (req, res) => {
                     promoteBudget,
                     estimatedReach,
                     promoteTag,
+                    showTill: newShowTill,
                     // If post level / label was selected
                     label: isPostLevel ? selectedLabel : undefined,
                     // Reset counts for new promotion
