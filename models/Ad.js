@@ -88,6 +88,9 @@ const adSchema = new mongoose.Schema({
     promoteDuration: {
         type: Number
     },
+    promoteStartDate: {
+        type: Date
+    },
     promoteEndDate: {
         type: Date
     },
@@ -192,7 +195,21 @@ const adSchema = new mongoose.Schema({
     userNewPhotos: {
         type: Boolean,
         default: false
-    }
+    },
+    promotionHistory: [{
+        startDate: Date,
+        endDate: Date,
+        adType: String,
+        promoteType: String,
+        promoteTag: String,
+        budget: Number,
+        views: Number,
+        deliveryCount: Number,
+        createdAt: {
+            type: Date,
+            default: Date.now
+        }
+    }]
 }, { timestamps: true });
 
 adSchema.index({ status: 1, createdAt: -1 });

@@ -11,9 +11,11 @@ const registerUser = async (req, res) => {
     const { name, email, password, dob, gender, mobile, storeName, actionType } = req.body;
 
     try {
+        const normalizedName = (name || '').trim() || mobile || (email ? email.split('@')[0] : 'User');
+
         // Validate required fields
-        if (!name || !password) {
-            return res.status(400).json({ message: 'Name and password are required' });
+        if (!password) {
+            return res.status(400).json({ message: 'Password is required' });
         }
 
         if (!email && !mobile) {
@@ -37,7 +39,7 @@ const registerUser = async (req, res) => {
 
         // Create new user (password will be hashed automatically by the pre-save hook)
         const newUser = new User({
-            name,
+            name: normalizedName,
             email: email || undefined,
             password,
             dob: dob || undefined,
@@ -64,7 +66,8 @@ const registerUser = async (req, res) => {
                 name: newUser.name,
                 email: newUser.email,
                 storeName: newUser.storeName,
-                actionType: newUser.actionType
+                actionType: newUser.actionType,
+                verifiedBy: newUser.verifiedBy
             }
         });
     } catch (err) {
@@ -134,7 +137,8 @@ const loginUser = async (req, res) => {
                 email: user.email,
                 mobile: user.mobile,
                 storeName: user.storeName,
-                actionType: user.actionType
+                actionType: user.actionType,
+                verifiedBy: user.verifiedBy
             }
         });
     } catch (err) {
@@ -622,7 +626,10 @@ const checkMobile = async (req, res) => {
     const { mobile } = req.body;
     try {
         const user = await User.findOne({ mobile });
-        res.json({ exists: !!user });
+        res.json({
+            exists: !!user,
+            verifiedBy: user ? user.verifiedBy : null
+        });
     } catch (err) {
         console.error('Error checking mobile:', err);
         res.status(500).json({ message: 'Server error' });

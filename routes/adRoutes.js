@@ -42,6 +42,11 @@ router.delete('/:id', authenticateUser, adController.deleteMyAd);
 // @access  Private
 router.put('/:id/promote', authenticateUser, adController.promoteAd);
 
+// @route   GET api/ads/public/feed
+// @desc    Get paginated active ads for public feed (separated by adType)
+// @access  Public
+router.get('/public/feed', adController.getFeedAdsPublic);
+
 // @route   GET api/ads/public/all
 // @desc    Get all active ads for public feed
 // @access  Public

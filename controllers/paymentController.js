@@ -174,24 +174,49 @@ const successPayment = async (req, res) => {
                 const newShowTill = new Date(promoteEndDate);
                 newShowTill.setDate(newShowTill.getDate() + inactiveDays);
 
-                await Ad.findByIdAndUpdate(payment.ad, {
-                    adType: 'Promoted',
-                    promoteType,
-                    trafficLink,
-                    trafficButtonType,
-                    targetLocations,
-                    promoteDuration,
-                    promoteEndDate: new Date(promoteEndDate),
-                    promoteBudget,
-                    estimatedReach,
-                    promoteTag,
-                    showTill: newShowTill,
+                const ad = await Ad.findById(payment.ad);
+                if (ad) {
+                    // Archive previous promotion if it exists
+                    if (ad.adType === 'Promoted') {
+                        ad.promotionHistory = ad.promotionHistory || [];
+                        ad.promotionHistory.push({
+                            startDate: ad.promoteStartDate || ad.createdAt,
+                            endDate: ad.promoteEndDate || new Date(),
+                            adType: ad.adType,
+                            promoteType: ad.promoteType,
+                            promoteTag: ad.promoteTag,
+                            budget: ad.promoteBudget,
+                            views: ad.promotedViews || 0,
+                            deliveryCount: ad.promotedDeliveryCount || 0,
+                            createdAt: new Date()
+                        });
+                    }
+
+                    // Update with new promotion details
+                    ad.adType = 'Promoted';
+                    ad.promoteType = promoteType;
+                    ad.trafficLink = trafficLink;
+                    ad.trafficButtonType = trafficButtonType;
+                    ad.targetLocations = targetLocations;
+                    ad.promoteDuration = promoteDuration;
+                    ad.promoteStartDate = new Date(); // Start tracking performance from NOW
+                    ad.promoteEndDate = new Date(promoteEndDate);
+                    ad.promoteBudget = promoteBudget;
+                    ad.estimatedReach = estimatedReach;
+                    ad.promoteTag = promoteTag;
+                    ad.showTill = newShowTill;
+
                     // If post level / label was selected
-                    label: isPostLevel ? selectedLabel : undefined,
-                    // Reset counts for new promotion
-                    promotedViews: 0,
-                    promotedDeliveryCount: 0
-                });
+                    if (isPostLevel) {
+                        ad.label = selectedLabel;
+                    }
+
+                    // Reset performance metrics for the new period
+                    ad.promotedViews = 0;
+                    ad.promotedDeliveryCount = 0;
+
+                    await ad.save();
+                }
 
                 // Automatically upgrade user to Premium when an ad is promoted
                 if (payment.user) {

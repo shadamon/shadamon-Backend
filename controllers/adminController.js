@@ -123,9 +123,61 @@ const updateAdmin = async (req, res) => {
 // User Management
 const getAllUsers = async (req, res) => {
     try {
-        const users = await User.find().sort({ createdAt: -1 });
-        res.json(users);
+        let query = {};
+        const { id, mobile, email, category, location, status, merchantType, dateFrom, dateTo } = req.query;
+
+        if (id) {
+            if (mongoose.Types.ObjectId.isValid(id)) {
+                query._id = id;
+            } else {
+                return res.json({ success: true, count: 0, total: 0, page: 1, pages: 1, data: [] });
+            }
+        }
+        if (mobile) query.mobile = new RegExp(mobile, 'i');
+        if (email) query.email = new RegExp(email, 'i');
+        if (category && category !== 'Select') query.category = category;
+        if (location && location !== 'Select') query.location = location;
+        if (status && status !== 'Select') query.accountStatus = status;
+
+        if (merchantType && merchantType !== 'both' && merchantType !== 'Both') {
+            if (merchantType === 'seller') {
+                query.merchantType = { $in: ['Premium', 'Free Saller'] };
+            } else if (merchantType === 'customer') {
+                query.merchantType = 'Free';
+            }
+        }
+
+        if (dateFrom || dateTo) {
+            query.createdAt = {};
+            if (dateFrom) query.createdAt.$gte = new Date(dateFrom);
+            if (dateTo) {
+                const toDate = new Date(dateTo);
+                toDate.setHours(23, 59, 59, 999);
+                query.createdAt.$lte = toDate;
+            }
+        }
+
+        const page = parseInt(req.query.page, 10) || 1;
+        const limit = parseInt(req.query.limit, 10) || 100;
+        const skip = (page - 1) * limit;
+
+        const users = await User.find(query)
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(limit);
+
+        const total = await User.countDocuments(query);
+
+        res.json({
+            success: true,
+            count: users.length,
+            total,
+            page,
+            pages: Math.ceil(total / limit),
+            data: users
+        });
     } catch (err) {
+        console.error('Error fetching users:', err);
         res.status(500).json({ message: 'Server error' });
     }
 };
@@ -254,11 +306,58 @@ const checkUsername = async (req, res) => {
 
 const getTransactions = async (req, res) => {
     try {
-        const transactions = await Transaction.find()
+        const page = parseInt(req.query.page, 10) || 1;
+        const limit = parseInt(req.query.limit, 10) || 100;
+        const skip = (page - 1) * limit;
+
+        const { tnxId, productId, sellerMobile, sellerId, item, mode, fromDate, toDate } = req.query;
+        let query = {};
+
+        if (tnxId) query.tnxId = new RegExp(tnxId, 'i');
+        if (sellerMobile) query.mobileNumber = new RegExp(sellerMobile, 'i');
+        if (item) query.item = new RegExp(item, 'i');
+        if (mode) query.mode = new RegExp(mode, 'i');
+
+        if (productId) {
+            if (mongoose.Types.ObjectId.isValid(productId)) {
+                query.productId = productId;
+            } else {
+                return res.json({ success: true, total: 0, page: 1, pages: 1, data: [] });
+            }
+        }
+        if (sellerId) {
+            if (mongoose.Types.ObjectId.isValid(sellerId)) {
+                query.sellerId = sellerId;
+            } else {
+                return res.json({ success: true, total: 0, page: 1, pages: 1, data: [] });
+            }
+        }
+        if (fromDate || toDate) {
+            query.payTime = {};
+            if (fromDate) query.payTime.$gte = new Date(fromDate);
+            if (toDate) {
+                const to = new Date(toDate);
+                to.setHours(23, 59, 59, 999);
+                query.payTime.$lte = to;
+            }
+        }
+
+        const transactions = await Transaction.find(query)
             .populate('sellerId', 'name mobile')
             .populate('productId', 'headline')
-            .sort({ createdAt: -1 });
-        res.json({ success: true, data: transactions });
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(limit);
+
+        const total = await Transaction.countDocuments(query);
+
+        res.json({
+            success: true,
+            total,
+            page,
+            pages: Math.ceil(total / limit),
+            data: transactions
+        });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
     }

@@ -322,13 +322,24 @@ exports.getAllAdsAdmin = async (req, res) => {
             );
         }
 
+        const page = parseInt(req.query.page, 10) || 1;
+        const limit = parseInt(req.query.limit, 10) || 100;
+        const skip = (page - 1) * limit;
+
         const ads = await Ad.find(query)
             .populate('user', 'name email mobile storeLogo storeBanner merchantType mVerified merchantTrustStatus sellerPageUrl')
-            .sort({ createdAt: -1 });
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(limit);
+
+        const total = await Ad.countDocuments(query);
 
         res.json({
             success: true,
             count: ads.length,
+            total,
+            page,
+            pages: Math.ceil(total / limit),
             data: ads
         });
     } catch (err) {
@@ -488,6 +499,41 @@ exports.updateAdDetails = async (req, res) => {
         if (url !== undefined) ad.url = url;
         if (actionType) ad.actionType = actionType;
         if (adType) {
+            // If changing to promoted, or re-promoting an already promoted ad
+            if (adType === 'Promoted') {
+                // If it was already promoted, check if we should archive the previous performance
+                // Usually if adType was already promoted and we are "re-promoting" (indicated by some flag or date change)
+                // But for manual admin update, let's archive IF there's a significant change or if they explicitly want to start new
+                // For now, let's archive only if it WAS already promoted and they are changing some promotion-specific data?
+                // Actually, let's archive if it was already promoted and we are updating adType to 'Promoted' (which it already was)
+                // Wait, if it was already promoted, we don't necessarily want to archive on every edit.
+                // But if it was EXPIRED or INACTIVE and being reactivated, we definitely should.
+
+                if (ad.adType === 'Promoted' && (ad.status !== 'active' || ad.promoteEndDate < new Date())) {
+                    ad.promotionHistory = ad.promotionHistory || [];
+                    ad.promotionHistory.push({
+                        startDate: ad.promoteStartDate || ad.createdAt,
+                        endDate: ad.promoteEndDate || new Date(),
+                        adType: ad.adType,
+                        promoteType: ad.promoteType,
+                        promoteTag: ad.promoteTag,
+                        budget: ad.promoteBudget,
+                        views: ad.promotedViews || 0,
+                        deliveryCount: ad.promotedDeliveryCount || 0,
+                        createdAt: new Date()
+                    });
+
+                    // Reset for new period
+                    ad.promoteStartDate = new Date();
+                    ad.promotedViews = 0;
+                    ad.promotedDeliveryCount = 0;
+                } else if (ad.adType !== 'Promoted') {
+                    // Changing from Free to Promoted for the first time
+                    ad.promoteStartDate = new Date();
+                    ad.promotedViews = 0;
+                    ad.promotedDeliveryCount = 0;
+                }
+            }
             ad.adType = adType;
             // If admin promotes an ad manually, upgrade the user to Premium
             if (adType === 'Promoted' && ad.user) {
@@ -625,6 +671,111 @@ exports.updateAdDetails = async (req, res) => {
     }
 };
 
+// @route   GET api/ads/public/feed
+// @desc    Get paginated active ads for public feed (separated by adType for chunks)
+// @access  Public
+exports.getFeedAdsPublic = async (req, res) => {
+    try {
+        const { category, subCategory, location, subLocation, promoteTag, sort, search, page = 1 } = req.query;
+
+        let query = { status: 'active' };
+
+        if (category) query.category = category;
+        if (subCategory) query.subCategory = subCategory;
+        if (location) query.location = location;
+        if (subLocation) query.subLocation = subLocation;
+        if (promoteTag && promoteTag !== 'All') {
+            query.promoteTag = promoteTag;
+            query.adType = 'Promoted';
+        }
+
+        if (search) {
+            const searchRegex = new RegExp(search.split(/\s+/).filter(Boolean).join('|'), 'i');
+            query.$or = [
+                { headline: searchRegex },
+                { description: searchRegex }
+            ];
+        }
+
+        let sortQuery = {};
+        if (search) {
+            sortQuery = { adType: 1, createdAt: -1 };
+        } else {
+            sortQuery = { createdAt: -1 };
+        }
+
+        if (sort === 'oldest') sortQuery = { createdAt: 1 };
+        else if (sort === 'price-high') sortQuery = { price: -1 };
+        else if (sort === 'price-low') sortQuery = { price: 1 };
+
+        const pageNum = parseInt(page);
+        const promotedLimit = 6;
+        const freeLimit = 5;
+
+        // Fetch promoted ads for this page
+        let promotedAds = await Ad.find({ ...query, adType: 'Promoted' })
+            .select('headline description features views price images location subLocation category subCategory createdAt deliveryCount user adType phone hidePhone additionalPhones promotedViews promotedDeliveryCount dailyViewsCount dailyDeliveryCount promoteStartDate promoteEndDate')
+            .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType createdAt verifiedBy mVerified sellerPageUrl')
+            .sort(sortQuery)
+            .skip((pageNum - 1) * promotedLimit)
+            .limit(promotedLimit);
+
+        // Fetch free ads for this page
+        let freeAds = await Ad.find({ ...query, adType: { $ne: 'Promoted' } })
+            .select('headline description features views price images location subLocation category subCategory createdAt deliveryCount user adType phone hidePhone additionalPhones promotedViews promotedDeliveryCount dailyViewsCount dailyDeliveryCount promoteStartDate promoteEndDate')
+            .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType createdAt verifiedBy mVerified sellerPageUrl')
+            .sort(sortQuery)
+            .skip((pageNum - 1) * freeLimit)
+            .limit(freeLimit);
+
+        let ads = [...promotedAds, ...freeAds];
+
+        // Optimize images to send only the first one
+        const optimizedAds = ads.map(ad => {
+            const adObj = ad.toObject();
+            if (adObj.images && adObj.images.length > 0) {
+                adObj.images = [adObj.images[0]];
+            }
+            return adObj;
+        });
+
+        // Impression counting logic
+        if (ads.length > 0) {
+            const adIds = ads.map(ad => ad._id);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+
+            await Ad.updateMany(
+                { _id: { $in: adIds }, lastDeliveryDate: { $lt: today } },
+                { $set: { dailyDeliveryCount: 0, lastDeliveryDate: new Date() } }
+            );
+            await Ad.updateMany(
+                { _id: { $in: adIds }, lastViewsDate: { $lt: today } },
+                { $set: { dailyViewsCount: 0, lastViewsDate: new Date() } }
+            );
+
+            await Ad.updateMany(
+                { _id: { $in: adIds } },
+                { $inc: { deliveryCount: 1, dailyDeliveryCount: 1 }, $set: { lastDeliveryDate: new Date() } }
+            ).catch(err => console.error("Error updating delivery counts:", err));
+
+            await Ad.updateMany(
+                { _id: { $in: adIds }, adType: 'Promoted' },
+                { $inc: { promotedDeliveryCount: 1 } }
+            ).catch(err => console.error("Error updating promoted delivery counts:", err));
+        }
+
+        res.json({
+            success: true,
+            hasMore: promotedAds.length === promotedLimit || freeAds.length === freeLimit,
+            data: optimizedAds
+        });
+    } catch (err) {
+        console.error("Error fetching feed ads:", err.message);
+        res.status(500).json({ success: false, message: 'Server Error' });
+    }
+};
+
 // @route   GET api/ads/public/all
 // @desc    Get all active ads for public feed and increment views
 // @access  Public
@@ -665,7 +816,7 @@ exports.getAllAdsPublic = async (req, res) => {
 
         // Fetch active ads
         let adsQuery = Ad.find(query)
-            .select('headline description features views price images location subLocation category subCategory createdAt deliveryCount user adType phone hidePhone additionalPhones')
+            .select('headline description features views price images location subLocation category subCategory createdAt deliveryCount user adType phone hidePhone additionalPhones promotedViews promotedDeliveryCount dailyViewsCount dailyDeliveryCount promoteStartDate promoteEndDate')
             .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType createdAt verifiedBy mVerified sellerPageUrl')
             .sort(sortQuery);
 
@@ -788,21 +939,16 @@ exports.getSingleAdPublic = async (req, res) => {
         }
 
         // Increment promotedViews if ad is promoted
-        if (ad.adType === 'Promoted') {
+        if (ad.adType && ad.adType.toLowerCase() === 'promoted') {
             update.$inc.promotedViews = 1;
         }
 
-        await Ad.findByIdAndUpdate(req.params.id, update);
-
-        // Update local object for immediate response feedback
-        ad.views += 1;
-        if (ad.adType === 'Promoted') {
-            ad.promotedViews = (ad.promotedViews || 0) + 1;
-        }
+        const updatedAd = await Ad.findByIdAndUpdate(req.params.id, update, { new: true })
+            .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType verifiedBy mVerified');
 
         res.json({
             success: true,
-            data: ad
+            data: updatedAd
         });
     } catch (err) {
         console.error("Error fetching single ad:", err.message);
@@ -1060,6 +1206,25 @@ exports.promoteAd = async (req, res) => {
         newShowTill.setDate(newShowTill.getDate() + inactiveDays);
         ad.showTill = newShowTill;
 
+        // Archive previous promotion if it exists
+        if (ad.adType === 'Promoted') {
+            ad.promotionHistory = ad.promotionHistory || [];
+            ad.promotionHistory.push({
+                startDate: ad.promoteStartDate || ad.createdAt,
+                endDate: ad.promoteEndDate || new Date(),
+                adType: ad.adType,
+                promoteType: ad.promoteType,
+                promoteTag: ad.promoteTag,
+                budget: ad.promoteBudget,
+                views: ad.promotedViews || 0,
+                deliveryCount: ad.promotedDeliveryCount || 0,
+                createdAt: new Date()
+            });
+        }
+
+        // Set Start Date for the new promotion
+        ad.promoteStartDate = new Date();
+
         // Reset performance metrics for the new promotion
         ad.promotedViews = 0;
         ad.promotedDeliveryCount = 0;
@@ -1103,16 +1268,19 @@ exports.createAdAdmin = async (req, res) => {
             features
         } = req.body;
 
-        // Find user by mobile or use a default admin user ID if provided
-        let targetUser = await User.findOne({ mobile: userMobile || phone });
+        // Find user by merchantID or mobile
+        let targetUser = null;
+        if (merchantID && merchantID.match(/^[0-9a-fA-F]{24}$/)) {
+            targetUser = await User.findById(merchantID);
+        }
         if (!targetUser) {
-            // If user not found, we might want to fail or use the admin's ID
+            targetUser = await User.findOne({ mobile: userMobile || phone });
+        }
+        if (!targetUser) {
             // For now, let's require a valid user mobile or handle it as needed
             // return res.status(404).json({ success: false, message: 'Owner user not found' });
             // Let's assume the admin provides a valid phone number from a registered user
         }
-
-        // Process images
         // Process images
         let imagePaths = req.files ? req.files.map(file => file.path.replace(/\\/g, "/")) : [];
         // Removed base64 image processing
@@ -1148,7 +1316,8 @@ exports.createAdAdmin = async (req, res) => {
             showTill: finalShowTill,
             note,
             features: features ? (typeof features === 'string' ? JSON.parse(features) : features) : {},
-            status: req.body.status || 'active'
+            status: req.body.status || 'active',
+            promoteStartDate: adType === 'Promoted' ? new Date() : undefined
         });
 
         const ad = await newAd.save();
