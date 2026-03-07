@@ -45,10 +45,37 @@ const processImages = async (req, res, next) => {
             const filename = (file.fieldname || 'file') + '-' + uniqueSuffix + '.webp';
             const filepath = path.join('uploads', filename);
 
-            // Convert buffer to WebP and save to file
-            await sharp(file.buffer)
-                .webp({ quality: 80 })
-                .toFile(filepath);
+            // Convert buffer to WebP and ensure it's under 100KB
+            let quality = 80;
+            let outputBuffer = await sharp(file.buffer)
+                .webp({ quality })
+                .toBuffer();
+
+            // Loop to reduce quality if size is > 100KB
+            while (outputBuffer.length > 100 * 1024 && quality > 10) {
+                quality -= 5;
+                outputBuffer = await sharp(file.buffer)
+                    .webp({ quality })
+                    .toBuffer();
+            }
+
+            // If still > 100KB, resize the image
+            if (outputBuffer.length > 100 * 1024) {
+                outputBuffer = await sharp(file.buffer)
+                    .resize({ width: 1200, withoutEnlargement: true })
+                    .webp({ quality: 60 })
+                    .toBuffer();
+            }
+
+            // Final check - if still too large, more aggressive reduction
+            if (outputBuffer.length > 100 * 1024) {
+                outputBuffer = await sharp(file.buffer)
+                    .resize({ width: 800, withoutEnlargement: true })
+                    .webp({ quality: 40 })
+                    .toBuffer();
+            }
+
+            await fs.promises.writeFile(filepath, outputBuffer);
 
             // Update file object properties
             file.filename = filename;

@@ -685,8 +685,14 @@ exports.getFeedAdsPublic = async (req, res) => {
         if (location) query.location = location;
         if (subLocation) query.subLocation = subLocation;
         if (promoteTag && promoteTag !== 'All') {
-            query.promoteTag = promoteTag;
-            query.adType = 'Promoted';
+            if (promoteTag === 'Verified') {
+                const verifiedUsers = await User.find({ mVerified: true }).select('_id');
+                const verifiedUserIds = verifiedUsers.map(u => u._id);
+                query.user = { $in: verifiedUserIds };
+            } else {
+                query.promoteTag = promoteTag;
+                query.adType = 'Promoted';
+            }
         }
 
         if (search) {
@@ -695,6 +701,15 @@ exports.getFeedAdsPublic = async (req, res) => {
                 { headline: searchRegex },
                 { description: searchRegex }
             ];
+
+            // If any word in search query is a valid ObjectId, search by _id or user ID too
+            const words = search.trim().split(/\s+/);
+            words.forEach(word => {
+                if (mongoose.Types.ObjectId.isValid(word)) {
+                    query.$or.push({ _id: word });
+                    query.$or.push({ user: word });
+                }
+            });
         }
 
         let sortQuery = {};
@@ -709,26 +724,17 @@ exports.getFeedAdsPublic = async (req, res) => {
         else if (sort === 'price-low') sortQuery = { price: 1 };
 
         const pageNum = parseInt(page);
-        const promotedLimit = 6;
-        const freeLimit = 5;
+        const totalLimit = 22;
 
-        // Fetch promoted ads for this page
-        let promotedAds = await Ad.find({ ...query, adType: 'Promoted' })
+        // Unified query to prioritize Promoted ads, then apply chosen sort
+        const finalSort = { adType: -1, ...sortQuery };
+
+        let ads = await Ad.find(query)
             .select('headline description features views price images location subLocation category subCategory createdAt deliveryCount user adType phone hidePhone additionalPhones promotedViews promotedDeliveryCount dailyViewsCount dailyDeliveryCount promoteStartDate promoteEndDate')
             .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType createdAt verifiedBy mVerified sellerPageUrl')
-            .sort(sortQuery)
-            .skip((pageNum - 1) * promotedLimit)
-            .limit(promotedLimit);
-
-        // Fetch free ads for this page
-        let freeAds = await Ad.find({ ...query, adType: { $ne: 'Promoted' } })
-            .select('headline description features views price images location subLocation category subCategory createdAt deliveryCount user adType phone hidePhone additionalPhones promotedViews promotedDeliveryCount dailyViewsCount dailyDeliveryCount promoteStartDate promoteEndDate')
-            .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType createdAt verifiedBy mVerified sellerPageUrl')
-            .sort(sortQuery)
-            .skip((pageNum - 1) * freeLimit)
-            .limit(freeLimit);
-
-        let ads = [...promotedAds, ...freeAds];
+            .sort(finalSort)
+            .skip((pageNum - 1) * totalLimit)
+            .limit(totalLimit);
 
         // Optimize images to send only the first one
         const optimizedAds = ads.map(ad => {
@@ -767,7 +773,7 @@ exports.getFeedAdsPublic = async (req, res) => {
 
         res.json({
             success: true,
-            hasMore: promotedAds.length === promotedLimit || freeAds.length === freeLimit,
+            hasMore: ads.length === totalLimit,
             data: optimizedAds
         });
     } catch (err) {
@@ -790,8 +796,14 @@ exports.getAllAdsPublic = async (req, res) => {
         if (location) query.location = location;
         if (subLocation) query.subLocation = subLocation;
         if (promoteTag && promoteTag !== 'All') {
-            query.promoteTag = promoteTag;
-            query.adType = 'Promoted';
+            if (promoteTag === 'Verified') {
+                const verifiedUsers = await User.find({ mVerified: true }).select('_id');
+                const verifiedUserIds = verifiedUsers.map(u => u._id);
+                query.user = { $in: verifiedUserIds };
+            } else {
+                query.promoteTag = promoteTag;
+                query.adType = 'Promoted';
+            }
         }
 
         if (search) {
@@ -800,12 +812,21 @@ exports.getAllAdsPublic = async (req, res) => {
                 { headline: searchRegex },
                 { description: searchRegex }
             ];
+
+            // If any word in search query is a valid ObjectId, search by _id or user ID too
+            const words = search.trim().split(/\s+/);
+            words.forEach(word => {
+                if (mongoose.Types.ObjectId.isValid(word)) {
+                    query.$or.push({ _id: word });
+                    query.$or.push({ user: word });
+                }
+            });
         }
 
         let sortQuery = {};
         if (search) {
             // Priority to promoted ads when searching
-            sortQuery = { adType: 1, createdAt: -1 };
+            sortQuery = { adType: -1, createdAt: -1 };
         } else {
             sortQuery = { createdAt: -1 };
         }
@@ -894,8 +915,14 @@ exports.getAdsCount = async (req, res) => {
         if (location) query.location = location;
         if (subLocation) query.subLocation = subLocation;
         if (promoteTag && promoteTag !== 'All') {
-            query.promoteTag = promoteTag;
-            query.adType = 'Promoted';
+            if (promoteTag === 'Verified') {
+                const verifiedUsers = await User.find({ mVerified: true }).select('_id');
+                const verifiedUserIds = verifiedUsers.map(u => u._id);
+                query.user = { $in: verifiedUserIds };
+            } else {
+                query.promoteTag = promoteTag;
+                query.adType = 'Promoted';
+            }
         }
 
         const count = await Ad.countDocuments(query);

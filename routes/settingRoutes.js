@@ -40,14 +40,29 @@ const processSettingsImages = async (req, res, next) => {
             const filename = fieldname + '-logo-' + uniqueSuffix + '.webp';
             const filepath = path.join(uploadDir, filename);
 
-            // Compress this images in 500*500 and in webp format
-            await sharp(file.buffer)
+            // Compress these images in 500*500, webp format, and ensure under 100KB
+            let quality = 80;
+            let outputBuffer = await sharp(file.buffer)
                 .resize(500, 500, {
                     fit: sharp.fit.inside,
                     withoutEnlargement: true
                 })
-                .webp({ quality: 80 })
-                .toFile(filepath);
+                .webp({ quality })
+                .toBuffer();
+
+            // Loop to reduce quality if size is > 100KB
+            while (outputBuffer.length > 100 * 1024 && quality > 20) {
+                quality -= 10;
+                outputBuffer = await sharp(file.buffer)
+                    .resize(500, 500, {
+                        fit: sharp.fit.inside,
+                        withoutEnlargement: true
+                    })
+                    .webp({ quality })
+                    .toBuffer();
+            }
+
+            await fs.promises.writeFile(filepath, outputBuffer);
 
             req.customFiles[fieldname] = filepath.replace(/\\/g, '/');
         } catch (error) {

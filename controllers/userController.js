@@ -67,7 +67,8 @@ const registerUser = async (req, res) => {
                 email: newUser.email,
                 storeName: newUser.storeName,
                 actionType: newUser.actionType,
-                verifiedBy: newUser.verifiedBy
+                verifiedBy: newUser.verifiedBy,
+                photo: newUser.photo
             }
         });
     } catch (err) {
@@ -138,7 +139,8 @@ const loginUser = async (req, res) => {
                 mobile: user.mobile,
                 storeName: user.storeName,
                 actionType: user.actionType,
-                verifiedBy: user.verifiedBy
+                verifiedBy: user.verifiedBy,
+                photo: user.photo
             }
         });
     } catch (err) {

@@ -79,7 +79,6 @@ const adSchema = new mongoose.Schema({
     },
     promoteTag: {
         type: String,
-        enum: ['All', 'Urgent', 'Discount', 'Offer', 'Highlights'],
         default: 'All'
     },
     targetLocations: {

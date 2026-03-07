@@ -50,9 +50,37 @@ const downloadAndSaveImage = async (url) => {
 
         const filePath = path.join(uploadDir, fileName);
 
-        await sharp(buffer)
-            .webp({ quality: 80 })
-            .toFile(filePath);
+        // Convert buffer to WebP and ensure it's under 100KB
+        let quality = 80;
+        let outputBuffer = await sharp(buffer)
+            .webp({ quality })
+            .toBuffer();
+
+        // Loop to reduce quality if size is > 100KB
+        while (outputBuffer.length > 100 * 1024 && quality > 10) {
+            quality -= 5;
+            outputBuffer = await sharp(buffer)
+                .webp({ quality })
+                .toBuffer();
+        }
+
+        // If still > 100KB, resize the image
+        if (outputBuffer.length > 100 * 1024) {
+            outputBuffer = await sharp(buffer)
+                .resize({ width: 1200, withoutEnlargement: true })
+                .webp({ quality: 60 })
+                .toBuffer();
+        }
+
+        // Final check - if still too large, more aggressive reduction
+        if (outputBuffer.length > 100 * 1024) {
+            outputBuffer = await sharp(buffer)
+                .resize({ width: 800, withoutEnlargement: true })
+                .webp({ quality: 40 })
+                .toBuffer();
+        }
+
+        await fs.promises.writeFile(filePath, outputBuffer);
 
         return `uploads/${fileName}`;
     } catch (err) {
