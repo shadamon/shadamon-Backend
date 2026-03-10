@@ -33,4 +33,27 @@ const sendSMSOTP = async (phone, otp) => {
     }
 };
 
-module.exports = { sendSMSOTP };
+const sendSMSNotification = async (phone, message) => {
+    try {
+        const apikey = process.env.SMS_API_KEY;
+        const sender = process.env.SMS_SENDER_ID;
+        const msg = message;
+
+        const url = `https://api.smsbangla.com.bd/smsapiv3?apikey=${apikey}&sender=${sender}&msisdn=${phone}&smstext=${encodeURIComponent(msg)}`;
+
+        const response = await axios.get(url);
+
+        if (response.data && response.data.response && response.data.response[0].status === 0) {
+            console.log(`Notification SMS sent successfully to ${phone}`);
+            return true;
+        } else {
+            console.error('SMS Notification API Error:', response.data);
+            return false;
+        }
+    } catch (error) {
+        console.error('Error sending SMS Notification:', error.message);
+        return false;
+    }
+};
+
+module.exports = { sendSMSOTP, sendSMSNotification };

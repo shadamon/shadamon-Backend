@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const settingController = require('../controllers/settingController');
-const { verifyToken } = require('../middleware/auth');
+const { verifyToken, checkPermission } = require('../middleware/auth');
 const multer = require('multer');
 const sharp = require('sharp');
 const path = require('path');
@@ -82,8 +82,8 @@ const processSettingsImages = async (req, res, next) => {
     }
 };
 
-router.get('/', verifyToken, settingController.getSettings);
-router.put('/', verifyToken, uploadFields, processSettingsImages, settingController.updateSettings);
+router.get('/', verifyToken, checkPermission('Settings & Others'), settingController.getSettings);
+router.put('/', verifyToken, checkPermission('Settings & Others'), uploadFields, processSettingsImages, settingController.updateSettings);
 
 // Public route to fetch settings (Dashboard)
 router.get('/dashboard', settingController.getDashboardSettings);

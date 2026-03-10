@@ -8,7 +8,7 @@ const {
     checkEmail, checkMobile, facebookLogin, googleLogin,
     toggleNotifyPreference, toggleFavoriteAd, getPublicProfile,
     getPremiumUsers, followUser, checkSellerUrl,
-    incrementProfileViews, rateUser
+    incrementProfileViews, rateUser, changePassword, requestDelete
 } = require('../controllers/userController');
 const {
     requestOTP, verifyOTP, requestMobileOTP, verifyMobileOTP,
@@ -42,6 +42,16 @@ router.post('/google-login', googleLogin);
 // @desc    Get current user
 // @access  Private
 router.get('/me', protect, getMe);
+
+// @route   PUT /api/user/change-password
+// @desc    Change user password
+// @access  Private
+router.put('/change-password', protect, changePassword);
+
+// @route   POST /api/user/delete-request
+// @desc    Request account deletion
+// @access  Private
+router.post('/delete-request', protect, requestDelete);
 
 // @route   GET /api/user/activity
 // @desc    Get user activity

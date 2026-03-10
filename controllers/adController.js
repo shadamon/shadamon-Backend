@@ -327,7 +327,7 @@ exports.getAllAdsAdmin = async (req, res) => {
         const skip = (page - 1) * limit;
 
         const ads = await Ad.find(query)
-            .populate('user', 'name email mobile storeLogo storeBanner merchantType mVerified merchantTrustStatus sellerPageUrl')
+            .populate('user', 'name email mobile storeLogo storeBanner merchantType mVerified merchantTrustStatus sellerPageUrl followers')
             .sort({ createdAt: -1 })
             .skip(skip)
             .limit(limit);
@@ -354,7 +354,7 @@ exports.getAllAdsAdmin = async (req, res) => {
 exports.getAllPromotedAdsAdmin = async (req, res) => {
     try {
         const ads = await Ad.find({ adType: 'Promoted' })
-            .populate('user', 'name email mobile storeLogo storeBanner merchantType mVerified sellerPageUrl')
+            .populate('user', 'name email mobile storeLogo storeBanner merchantType mVerified sellerPageUrl followers')
             .sort({ createdAt: -1 });
 
         res.json({
@@ -731,7 +731,7 @@ exports.getFeedAdsPublic = async (req, res) => {
 
         let ads = await Ad.find(query)
             .select('headline description features views price images location subLocation category subCategory createdAt deliveryCount user adType phone hidePhone additionalPhones promotedViews promotedDeliveryCount dailyViewsCount dailyDeliveryCount promoteStartDate promoteEndDate')
-            .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType createdAt verifiedBy mVerified sellerPageUrl')
+            .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType createdAt verifiedBy mVerified sellerPageUrl followers')
             .sort(finalSort)
             .skip((pageNum - 1) * totalLimit)
             .limit(totalLimit);
@@ -838,7 +838,7 @@ exports.getAllAdsPublic = async (req, res) => {
         // Fetch active ads
         let adsQuery = Ad.find(query)
             .select('headline description features views price images location subLocation category subCategory createdAt deliveryCount user adType phone hidePhone additionalPhones promotedViews promotedDeliveryCount dailyViewsCount dailyDeliveryCount promoteStartDate promoteEndDate')
-            .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType createdAt verifiedBy mVerified sellerPageUrl')
+            .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType createdAt verifiedBy mVerified sellerPageUrl followers')
             .sort(sortQuery);
 
         if (limit) {
@@ -971,7 +971,7 @@ exports.getSingleAdPublic = async (req, res) => {
         }
 
         const updatedAd = await Ad.findByIdAndUpdate(req.params.id, update, { new: true })
-            .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType verifiedBy mVerified');
+            .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType verifiedBy mVerified followers');
 
         res.json({
             success: true,

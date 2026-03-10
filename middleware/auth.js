@@ -24,13 +24,35 @@ const verifyToken = (req, res, next) => {
     }
 };
 
-// Check if user is super admin
-const checkSuperAdmin = (req, res, next) => {
-    if (req.admin.role !== 'super-admin') {
-        return res.status(403).json({ message: 'Access denied. Super Admin only.' });
-    }
-    next();
+// Check specific permission
+const checkPermission = (permission) => {
+    return async (req, res, next) => {
+        try {
+            // First check if permissions are in the JWT payload (for performance)
+            if (req.admin.permissions && req.admin.permissions[permission] === true) {
+                return next();
+            }
+
+            // Fallback: Fetch latest from database (in case of old tokens or fresh updates)
+            const Admin = require('../models/Admin');
+            const admin = await Admin.findById(req.admin.id);
+
+            if (!admin || !admin.permissions || admin.permissions.get(permission) !== true) {
+                return res.status(403).json({
+                    message: `Access denied. Requires '${permission}' permission.`
+                });
+            }
+
+            // Update req.admin for subsequent middleware in this request
+            req.admin.permissions = admin.permissions;
+            next();
+        } catch (error) {
+            console.error('Permission check error:', error);
+            res.status(500).json({ message: 'Internal server error during permission check' });
+        }
+    };
 };
+
 
 // Authenticate regular users
 const authenticateUser = (req, res, next) => {
@@ -77,7 +99,7 @@ const optionalAuthenticateUser = (req, res, next) => {
 
 module.exports = {
     verifyToken,
-    checkSuperAdmin,
+    checkPermission,
     authenticateUser,
     optionalAuthenticateUser
 };

@@ -666,13 +666,21 @@ const followUser = async (req, res) => {
         if (!currentUser.following.includes(req.params.id)) {
             // Follow
             await currentUser.updateOne({ $push: { following: req.params.id } });
-            await targetUser.updateOne({ $push: { followers: req.user.id } });
-            res.status(200).json({ message: "User followed", isFollowing: true });
+            const updatedTarget = await User.findByIdAndUpdate(
+                req.params.id,
+                { $push: { followers: req.user.id } },
+                { new: true }
+            ).select('followers');
+            res.status(200).json({ message: "User followed", isFollowing: true, followers: updatedTarget.followers });
         } else {
             // Unfollow
             await currentUser.updateOne({ $pull: { following: req.params.id } });
-            await targetUser.updateOne({ $pull: { followers: req.user.id } });
-            res.status(200).json({ message: "User unfollowed", isFollowing: false });
+            const updatedTarget = await User.findByIdAndUpdate(
+                req.params.id,
+                { $pull: { followers: req.user.id } },
+                { new: true }
+            ).select('followers');
+            res.status(200).json({ message: "User unfollowed", isFollowing: false, followers: updatedTarget.followers });
         }
     } catch (err) {
         console.error('Error following user:', err);
@@ -946,6 +954,56 @@ const incrementProfileViews = async (req, res) => {
     }
 };
 
+// @desc    Change user password
+// @route   PUT /api/user/change-password
+// @access  Private
+const changePassword = async (req, res) => {
+    try {
+        const { currentPassword, newPassword } = req.body;
+
+        if (!currentPassword || !newPassword) {
+            return res.status(400).json({ message: 'Current and new passwords are required' });
+        }
+
+        const user = await User.findById(req.user.id);
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        const isMatch = await bcrypt.compare(currentPassword, user.password);
+        if (!isMatch) {
+            return res.status(400).json({ message: 'Incorrect current password' });
+        }
+
+        user.password = newPassword;
+        await user.save();
+
+        res.json({ success: true, message: 'Password updated successfully' });
+    } catch (err) {
+        console.error('Error changing password:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+// @desc    Request account deletion
+// @route   POST /api/user/delete-request
+// @access  Private
+const requestDelete = async (req, res) => {
+    try {
+        const user = await User.findById(req.user.id);
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+        user.accountStatus = 'r_delete';
+        await user.save();
+
+        res.json({ success: true, message: 'Account deletion requested successfully' });
+    } catch (err) {
+        console.error('Error requesting delete:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
 module.exports = {
     registerUser,
     loginUser,
@@ -968,5 +1026,7 @@ module.exports = {
     incrementProfileViews,
     checkSellerUrl,
     toggleFavoriteAd,
-    toggleNotifyPreference
+    toggleNotifyPreference,
+    changePassword,
+    requestDelete
 };

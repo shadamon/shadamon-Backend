@@ -16,13 +16,14 @@ const {
     checkUsername,
     getNotificationTargetCount,
     getTransactions,
-    deleteTransaction
+    deleteTransaction,
+    getCurrentAdmin
 } = require('../controllers/adminController');
 const PromotionPlan = require('../models/PromotionPlan');
 const Ad = require('../models/Ad');
 const User = require('../models/User');
 const Transaction = require('../models/Transaction');
-const { verifyToken, checkSuperAdmin } = require('../middleware/auth');
+const { verifyToken, checkPermission } = require('../middleware/auth');
 const upload = require('../middleware/upload');
 
 // @route   POST /api/auth/login
@@ -30,23 +31,24 @@ const upload = require('../middleware/upload');
 // @access  Public
 router.post('/login', loginAdmin);
 
+// @route   GET /api/admins/me
+router.get('/me', verifyToken, getCurrentAdmin);
+
 // @route   GET /api/admins
 // @desc    Get all admins
-// @access  Private (Admin)
-router.get('/', verifyToken, getAllAdmins);
+router.get('/', verifyToken, checkPermission('Admin Create'), getAllAdmins);
 
 // @route   POST /api/admins
 // @desc    Create new admin
-// @access  Private (Super Admin only)
-router.post('/', verifyToken, checkSuperAdmin, createAdmin);
+router.post('/', verifyToken, checkPermission('Admin Create'), createAdmin);
 
 // @route   DELETE /api/admins/:id
 // @desc    Delete admin
-// @access  Private (Super Admin only)
-router.delete('/:id', verifyToken, checkSuperAdmin, deleteAdmin);
+router.delete('/:id', verifyToken, checkPermission('Admin Create'), deleteAdmin);
 
-// @access  Private (Super Admin only)
-router.put('/:id', verifyToken, checkSuperAdmin, updateAdmin);
+// @route   PUT /api/admins/:id
+// @desc    Update admin
+router.put('/:id', verifyToken, checkPermission('Admin Create'), updateAdmin);
 
 // User Management Routes (for Admin Panel)
 // @route   GET /api/admins/users/search-mobile
@@ -56,45 +58,45 @@ router.get('/users/search-mobile', verifyToken, searchUsersByMobile);
 router.get('/users/count', verifyToken, getUserCount);
 
 // @route   GET /api/admins/users
-router.get('/users', verifyToken, getAllUsers);
+router.get('/users', verifyToken, checkPermission('User'), getAllUsers);
 
 // @route   POST /api/admins/users
-router.post('/users', verifyToken, upload.fields([
+router.post('/users', verifyToken, checkPermission('User'), upload.fields([
     { name: 'photo', maxCount: 1 },
     { name: 'storeLogo', maxCount: 1 },
     { name: 'storeBanner', maxCount: 1 }
 ]), addUser);
 
 // @route   PUT /api/admins/users/:id
-router.put('/users/:id', verifyToken, upload.fields([
+router.put('/users/:id', verifyToken, checkPermission('User'), upload.fields([
     { name: 'photo', maxCount: 1 },
     { name: 'storeLogo', maxCount: 1 },
     { name: 'storeBanner', maxCount: 1 }
 ]), updateUser);
 
 // @route   DELETE /api/admins/users/:id
-router.delete('/users/:id', verifyToken, deleteUser);
+router.delete('/users/:id', verifyToken, checkPermission('User'), deleteUser);
 
 // @route   POST /api/admins/users/check-username
 router.post('/users/check-username', verifyToken, checkUsername);
 
 // @route   POST /api/admins/notifications/send
-router.post('/notifications/send', verifyToken, sendNotification);
+router.post('/notifications/send', verifyToken, checkPermission('Notification & Messaging'), sendNotification);
 
 // @route   POST /api/admins/notifications/count
-router.post('/notifications/count', verifyToken, getNotificationTargetCount);
+router.post('/notifications/count', verifyToken, checkPermission('Notification & Messaging'), getNotificationTargetCount);
 
 // --- Transaction Routes ---
 // @route   GET /api/admins/transactions
-router.get('/transactions', verifyToken, getTransactions);
+router.get('/transactions', verifyToken, checkPermission('Transaction Manager'), getTransactions);
 
 // @route   DELETE /api/admins/transactions/:id
-router.delete('/transactions/:id', verifyToken, deleteTransaction);
+router.delete('/transactions/:id', verifyToken, checkPermission('Transaction Manager'), deleteTransaction);
 
 // --- Promotion Plan Routes ---
 
 // GET all promotion plans
-router.get('/promotion-plans', verifyToken, async (req, res) => {
+router.get('/promotion-plans', verifyToken, checkPermission('Promote Management'), async (req, res) => {
     try {
         const plans = await PromotionPlan.find().sort({ createdAt: -1 });
         res.json(plans);
@@ -104,7 +106,7 @@ router.get('/promotion-plans', verifyToken, async (req, res) => {
 });
 
 // POST new promotion plan
-router.post('/promotion-plans', verifyToken, async (req, res) => {
+router.post('/promotion-plans', verifyToken, checkPermission('Promote Management'), async (req, res) => {
     try {
         const plan = new PromotionPlan(req.body);
         const newPlan = await plan.save();
@@ -115,7 +117,7 @@ router.post('/promotion-plans', verifyToken, async (req, res) => {
 });
 
 // PUT update promotion plan
-router.put('/promotion-plans/:id', verifyToken, async (req, res) => {
+router.put('/promotion-plans/:id', verifyToken, checkPermission('Promote Management'), async (req, res) => {
     try {
         const updatedPlan = await PromotionPlan.findByIdAndUpdate(req.params.id, req.body, { new: true });
         res.json(updatedPlan);
@@ -125,7 +127,7 @@ router.put('/promotion-plans/:id', verifyToken, async (req, res) => {
 });
 
 // DELETE promotion plan
-router.delete('/promotion-plans/:id', verifyToken, async (req, res) => {
+router.delete('/promotion-plans/:id', verifyToken, checkPermission('Promote Management'), async (req, res) => {
     try {
         await PromotionPlan.findByIdAndDelete(req.params.id);
         res.json({ message: 'Plan deleted' });
@@ -135,7 +137,7 @@ router.delete('/promotion-plans/:id', verifyToken, async (req, res) => {
 });
 
 // POST manual product promote
-router.post('/manual-promote', verifyToken, async (req, res) => {
+router.post('/manual-promote', verifyToken, checkPermission('Promote Management'), async (req, res) => {
     const { productId, amount, runTill, sellerId, isVerifyBadge, level } = req.body;
     try {
         let ad = null;

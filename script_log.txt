@@ -1,0 +1,3 @@
+✅ Connected to MongoDB
+🔄 Updating all admins with full permissions...
+✅ Success! Updated 6 admin(s).

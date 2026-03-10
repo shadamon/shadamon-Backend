@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const adController = require('../controllers/adController');
-const { authenticateUser, verifyToken, optionalAuthenticateUser } = require('../middleware/auth');
+const { authenticateUser, verifyToken, optionalAuthenticateUser, checkPermission } = require('../middleware/auth');
 const upload = require('../middleware/upload');
 
 // @route   POST api/ads
@@ -70,41 +70,41 @@ router.get('/public/:id', adController.getSingleAdPublic);
 // @route   GET api/ads/admin/all
 // @desc    Get all ads for admin
 // @access  Private (Admin)
-router.get('/admin/all', verifyToken, adController.getAllAdsAdmin);
+router.get('/admin/all', verifyToken, checkPermission('Post'), adController.getAllAdsAdmin);
 
 // @route   GET api/ads/admin/promoted
 // @desc    Get all promoted ads for admin
 // @access  Private (Admin)
-router.get('/admin/promoted', verifyToken, adController.getAllPromotedAdsAdmin);
+router.get('/admin/promoted', verifyToken, checkPermission('Post'), adController.getAllPromotedAdsAdmin);
 
 // @route   PUT api/ads/admin/:id/status
 // @desc    Update ad status
 // @access  Private (Admin)
-router.put('/admin/:id/status', verifyToken, adController.updateAdStatus);
+router.put('/admin/:id/status', verifyToken, checkPermission('Post'), adController.updateAdStatus);
 
 // @route   PUT api/ads/admin/:id/update
 // @desc    Update ad details by admin
 // @access  Private (Admin)
-router.put('/admin/:id/update', verifyToken, upload.array('images', 5), adController.updateAdDetails);
+router.put('/admin/:id/update', verifyToken, checkPermission('Post'), upload.array('images', 5), adController.updateAdDetails);
 
 // @route   PUT api/ads/admin/:id/see
 // @desc    Mark ad as seen by admin
 // @access  Private (Admin)
-router.put('/admin/:id/see', verifyToken, adController.markAdAsSeen);
+router.put('/admin/:id/see', verifyToken, checkPermission('Post'), adController.markAdAsSeen);
 
 // @route   DELETE api/ads/admin/:id/image
 // @desc    Remove specific image from ad
 // @access  Private (Admin)
-router.delete('/admin/:id/image', verifyToken, adController.deleteAdImage);
+router.delete('/admin/:id/image', verifyToken, checkPermission('Post'), adController.deleteAdImage);
 
 // @route   POST api/ads/admin/create
 // @desc    Create ad by admin
 // @access  Private (Admin)
-router.post('/admin/create', verifyToken, upload.array('images', 5), adController.createAdAdmin);
+router.post('/admin/create', verifyToken, checkPermission('Post'), upload.array('images', 5), adController.createAdAdmin);
 
 // @route   DELETE api/ads/admin/:id
 // @desc    Delete ad by admin
 // @access  Private (Admin)
-router.delete('/admin/:id', verifyToken, adController.deleteAdAdmin);
+router.delete('/admin/:id', verifyToken, checkPermission('Post'), adController.deleteAdAdmin);
 
 module.exports = router;

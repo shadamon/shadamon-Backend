@@ -7,7 +7,36 @@ const Transaction = require('../models/Transaction');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const emailService = require('../utils/emailService');
+const smsService = require('../utils/smsService');
 const { fileToBase64, processImageString } = require('../utils/imageHelper');
+
+/**
+ * Clean up user data: trim strings and handle empty unique fields
+ */
+const cleanUserData = (data) => {
+    const cleaned = { ...data };
+
+    // List of unique fields that should be undefined if empty to avoid MongoDB unique-empty index crash
+    const uniqueFields = ['sellerPageUrl', 'email'];
+
+    for (const key in cleaned) {
+        if (typeof cleaned[key] === 'string') {
+            cleaned[key] = cleaned[key].trim();
+
+            // If it's a unique field and now empty, set to undefined so sparse index ignores it
+            if (cleaned[key] === '' && uniqueFields.includes(key)) {
+                delete cleaned[key];
+            }
+
+            // If it's a password and empty, remove it so it doesn't overwrite with empty string
+            if (key === 'password' && cleaned[key] === '') {
+                delete cleaned[key];
+            }
+        }
+    }
+
+    return cleaned;
+};
 
 // @desc    Admin login
 // @route   POST /api/auth/login
@@ -27,7 +56,12 @@ const loginAdmin = async (req, res) => {
         }
 
         const token = jwt.sign(
-            { id: admin._id, role: admin.role, email: admin.email, staffName: admin.staffName || admin.email.split('@')[0] },
+            {
+                id: admin._id,
+                email: admin.email,
+                staffName: admin.staffName || admin.email.split('@')[0],
+                permissions: admin.permissions || {}
+            },
             process.env.JWT_SECRET,
             { expiresIn: '1d' }
         );
@@ -37,7 +71,7 @@ const loginAdmin = async (req, res) => {
             admin: {
                 id: admin._id,
                 email: admin.email,
-                role: admin.role
+                permissions: admin.permissions || {}
             }
         });
     } catch (err) {
@@ -63,7 +97,7 @@ const getAllAdmins = async (req, res) => {
 // @route   POST /api/admins
 // @access  Private (Super Admin only)
 const createAdmin = async (req, res) => {
-    const { email, password, role, staffName, staffType, status } = req.body;
+    const { email, password, staffName, staffType, status } = req.body;
 
     try {
         const existingAdmin = await Admin.findOne({ email });
@@ -74,7 +108,6 @@ const createAdmin = async (req, res) => {
         const newAdmin = new Admin({
             email,
             password,
-            role: role || 'admin',
             staffName,
             staffType,
             status,
@@ -87,7 +120,6 @@ const createAdmin = async (req, res) => {
             admin: {
                 id: newAdmin._id,
                 email: newAdmin.email,
-                role: newAdmin.role,
                 staffName: newAdmin.staffName,
                 staffType: newAdmin.staffType,
                 status: newAdmin.status,
@@ -116,6 +148,21 @@ const updateAdmin = async (req, res) => {
         const updatedAdmin = await Admin.findByIdAndUpdate(req.params.id, req.body, { new: true });
         res.json(updatedAdmin);
     } catch (err) {
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+// @desc    Get current logged in admin
+// @route   GET /api/admins/me
+const getCurrentAdmin = async (req, res) => {
+    try {
+        const admin = await Admin.findById(req.admin.id).select('-password');
+        if (!admin) {
+            return res.status(404).json({ message: 'Admin not found' });
+        }
+        res.json(admin);
+    } catch (err) {
+        console.error('Error fetching current admin:', err);
         res.status(500).json({ message: 'Server error' });
     }
 };
@@ -193,27 +240,48 @@ const getUserCount = async (req, res) => {
 
 const addUser = async (req, res) => {
     try {
-        const userData = { ...req.body };
+        const cleanedData = cleanUserData(req.body);
+        const userData = { ...cleanedData };
         const files = req.files;
+
+        if (userData.mobile) {
+            const existingUser = await User.findOne({ mobile: userData.mobile });
+            if (existingUser) {
+                return res.status(400).json({ message: 'Mobile number is already registered' });
+            }
+        }
 
         if (files) {
             if (files.photo) userData.photo = await processImageString(files.photo[0]);
             if (files.storeLogo) userData.storeLogo = await processImageString(files.storeLogo[0]);
             if (files.storeBanner) userData.storeBanner = await processImageString(files.storeBanner[0]);
+        }
+
+        if (!userData.storeName && userData.name) {
+            userData.storeName = userData.name;
         }
 
         const user = new User(userData);
         await user.save();
         res.status(201).json(user);
     } catch (err) {
+        console.error("Add user error:", err);
         res.status(500).json({ message: err.message });
     }
 };
 
 const updateUser = async (req, res) => {
     try {
-        const userData = { ...req.body };
+        const cleanedData = cleanUserData(req.body);
+        const userData = { ...cleanedData };
         const files = req.files;
+
+        if (userData.mobile) {
+            const existingUser = await User.findOne({ mobile: userData.mobile, _id: { $ne: req.params.id } });
+            if (existingUser) {
+                return res.status(400).json({ message: 'Mobile number is already used by another user' });
+            }
+        }
 
         if (files) {
             if (files.photo) userData.photo = await processImageString(files.photo[0]);
@@ -221,7 +289,26 @@ const updateUser = async (req, res) => {
             if (files.storeBanner) userData.storeBanner = await processImageString(files.storeBanner[0]);
         }
 
-        const user = await User.findByIdAndUpdate(req.params.id, userData, { new: true });
+        // Handle password update for findByIdAndUpdate as it doesn't trigger pre('save') hooks
+        if (userData.password) {
+            const salt = await bcrypt.genSalt(10);
+            userData.password = await bcrypt.hash(userData.password, salt);
+        }
+
+        const updateObj = { $set: userData };
+
+        // Handle unsetting for fields that were sent as empty strings
+        const fieldsToUnset = ['sellerPageUrl', 'email'].filter(f => req.body[f] === '');
+        if (fieldsToUnset.length > 0) {
+            updateObj.$unset = {};
+            fieldsToUnset.forEach(f => {
+                updateObj.$unset[f] = "";
+            });
+            delete updateObj.$set.sellerPageUrl;
+            delete updateObj.$set.email;
+        }
+
+        const user = await User.findByIdAndUpdate(req.params.id, updateObj, { new: true });
         res.json(user);
     } catch (err) {
         res.status(500).json({ message: err.message });
@@ -240,51 +327,171 @@ const deleteUser = async (req, res) => {
 const searchUsersByMobile = async (req, res) => {
     try {
         const { mobile } = req.query;
-        const users = await User.find({ mobile: new RegExp(mobile, 'i') });
+        // Search for users by mobile, but only return unique mobiles to avoid frontend key issues
+        // or just return everything but ensure frontend uses _id
+        const users = await User.find({ mobile: new RegExp(mobile, 'i') }).select('_id mobile name');
         res.json(users);
     } catch (err) {
         res.status(500).json({ message: 'Server error' });
     }
 };
 
+/**
+ * Helper to build user query based on advanced filters
+ */
+const getFilteredUsersQuery = async (filters) => {
+    let query = {};
+    const {
+        userType, categories, locations, promotedType, gender,
+        trustedSeller, loginFrom, loginTo, postQuantity, selectedUsers
+    } = filters;
+
+    if (userType === 'Selected') {
+        if (selectedUsers && selectedUsers.length > 0) {
+            query.mobile = { $in: selectedUsers };
+        } else {
+            return { _id: { $in: [] } };
+        }
+    } else {
+        // User Type
+        if (userType === 'Seller') {
+            query.merchantType = { $in: ['Premium', 'Free Saller'] };
+        } else if (userType === 'Customer') {
+            query.merchantType = 'Free';
+        }
+
+        // Category
+        if (categories && categories.length > 0 && !categories.includes('All')) {
+            query.category = { $in: categories };
+        }
+
+        // Location
+        if (locations && locations.length > 0 && !locations.includes('All')) {
+            query.location = { $in: locations };
+        }
+
+        // Gender
+        if (gender && gender !== 'All') {
+            query.gender = { $regex: new RegExp(`^${gender}$`, 'i') };
+        }
+
+        // Trusted Seller
+        if (trustedSeller && trustedSeller !== 'All') {
+            query.merchantTrustStatus = trustedSeller === 'Yes' ? 'Trusted' : 'Untrusted';
+        }
+
+        // Last Login Range
+        if (loginFrom || loginTo) {
+            query.lastLogin = {};
+            if (loginFrom) query.lastLogin.$gte = new Date(loginFrom);
+            if (loginTo) {
+                const toDate = new Date(loginTo);
+                toDate.setHours(23, 59, 59, 999);
+                query.lastLogin.$lte = toDate;
+            }
+        }
+
+        // Post Quantity Filter
+        if (postQuantity) {
+            const minQty = parseInt(postQuantity.replace('+', ''));
+            const userAdCounts = await Ad.aggregate([
+                { $group: { _id: "$user", count: { $sum: 1 } } },
+                { $match: { count: { $gte: minQty } } }
+            ]);
+            const userIds = userAdCounts.map(u => u._id).filter(id => id);
+            query._id = { $in: userIds };
+        }
+
+        // Promoted Type Filter
+        if (promotedType) {
+            let userIds;
+            if (promotedType === 'PP') {
+                userIds = await Ad.distinct('user', { adType: 'Promoted' });
+            } else if (promotedType === 'Running') {
+                userIds = await Ad.distinct('user', { status: 'active' });
+            } else if (promotedType === 'Never Promoted') {
+                const promotedUserIds = await Ad.distinct('user', { adType: 'Promoted' });
+                query._id = { ...query._id, $nin: promotedUserIds.filter(id => id) };
+            }
+
+            if (userIds && promotedType !== 'Never Promoted') {
+                const existingInQuery = query._id ? query._id.$in : null;
+                if (existingInQuery) {
+                    query._id.$in = userIds.filter(id => id && existingInQuery.some(eid => eid.toString() === id.toString()));
+                } else {
+                    query._id = { $in: userIds.filter(id => id) };
+                }
+            }
+        }
+    }
+    return query;
+};
+
 const sendNotification = async (req, res) => {
     try {
-        const { target, targetValue, title, message, action, link } = req.body;
-        let query = {};
+        const filters = req.body;
+        const { message, sendIn } = filters;
 
-        if (target === 'division') query.location = targetValue;
-        if (target === 'category') {
-            // Find users who posted in this category
-            const ads = await Ad.find({ category: targetValue }).distinct('user');
-            query._id = { $in: ads };
+        if (!message) return res.status(400).json({ message: 'Message is required' });
+
+        const query = await getFilteredUsersQuery(filters);
+        const users = await User.find(query).select('_id email mobile name');
+
+        if (users.length === 0) {
+            return res.json({ success: true, count: 0, message: 'No users found matching filters' });
         }
-        if (target === 'status') query.merchantTrustStatus = targetValue;
 
-        const users = await User.find(query);
-        const notifications = users.map(user => ({
-            user: user._id,
-            title,
-            message,
-            action,
-            link
-        }));
+        // Create in-app notifications
+        if (sendIn.includes('Account')) {
+            const notifications = users.map(user => ({
+                userId: user._id, // Fixed field name to match model
+                title: 'SHADAMON',
+                message: message,
+                type: 'admin_notification'
+            }));
+            await Notification.insertMany(notifications);
+        }
 
-        await Notification.insertMany(notifications);
-        res.json({ success: true, count: users.length });
+        // Send Emails
+        let usersWithoutEmail = [];
+        if (sendIn.includes('Mail')) {
+            for (const user of users) {
+                if (user.email) {
+                    await emailService.sendNotificationEmail(user.email, message);
+                } else {
+                    usersWithoutEmail.push(user.mobile);
+                }
+            }
+        }
+
+        // Send SMS
+        if (sendIn.includes('Mobile')) {
+            for (const user of users) {
+                if (user.mobile) {
+                    await smsService.sendSMSNotification(user.mobile, message);
+                }
+            }
+        }
+
+        res.json({
+            success: true,
+            count: users.length,
+            message: `Notification sent to ${users.length} users`,
+            usersWithoutEmail: usersWithoutEmail.length > 0 ? usersWithoutEmail : undefined
+        });
     } catch (err) {
+        console.error("Send notification error:", err);
         res.status(500).json({ message: err.message });
     }
 };
 
 const getNotificationTargetCount = async (req, res) => {
     try {
-        const { target, targetValue } = req.body;
-        let query = {};
-        if (target === 'division') query.location = targetValue;
-        if (target === 'status') query.merchantTrustStatus = targetValue;
+        const query = await getFilteredUsersQuery(req.body);
         const count = await User.countDocuments(query);
         res.json({ count });
     } catch (err) {
+        console.error("Count notification error:", err);
         res.status(500).json({ message: err.message });
     }
 };
@@ -388,5 +595,6 @@ module.exports = {
     getNotificationTargetCount,
     checkUsername,
     getTransactions,
-    deleteTransaction
+    deleteTransaction,
+    getCurrentAdmin
 };
