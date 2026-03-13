@@ -764,13 +764,13 @@ exports.getFeedAdsPublic = async (req, res) => {
 
         const pageNum = parseInt(page);
 
-        // Fetch 2 Promoted Ads per page
+        // Fetch 12 Promoted Ads per page (to support 1 big + 5 small x 2 cycles)
         const promotedAdsPromise = Ad.find({ ...query, adType: 'Promoted' })
             .select('headline description features labels views price images location subLocation category subCategory createdAt deliveryCount user adType phone hidePhone additionalPhones promotedViews promotedDeliveryCount dailyViewsCount dailyDeliveryCount promoteStartDate promoteEndDate promoteType trafficLink trafficButtonType promoteTag')
             .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType createdAt verifiedBy mVerified sellerPageUrl followers rating ratingCount')
             .sort(sortQuery)
-            .skip((pageNum - 1) * 2)
-            .limit(2);
+            .skip((pageNum - 1) * 12)
+            .limit(12);
 
         // Fetch 20 Free Ads per page
         const freeAdsPromise = Ad.find({ ...query, adType: { $ne: 'Promoted' } })
@@ -780,12 +780,12 @@ exports.getFeedAdsPublic = async (req, res) => {
             .skip((pageNum - 1) * 20)
             .limit(20);
 
-        // Fetch 2 Categories per page for interleaving
+        // Fetch 1 Categories per page for interleaving (1 category row per cycle/page)
         const categoriesPromise = Category.find({ postCount: { $gt: 0 } })
             .select('name icon _id')
             .sort({ order: 1 })
-            .skip((pageNum - 1) * 2)
-            .limit(2);
+            .skip((pageNum - 1) * 1)
+            .limit(1);
 
         const [promotedAds, freeAds, interleavedCategories] = await Promise.all([
             promotedAdsPromise,
@@ -831,7 +831,7 @@ exports.getFeedAdsPublic = async (req, res) => {
 
         res.json({
             success: true,
-            hasMore: freeAds.length === 20 || promotedAds.length === 2,
+            hasMore: freeAds.length === 20 || promotedAds.length === 12,
             data: optimizedAds,
             feedCategories: interleavedCategories
         });
@@ -882,17 +882,10 @@ exports.getAllAdsPublic = async (req, res) => {
             });
         }
 
-        let sortQuery = {};
-        if (search) {
-            // Priority to promoted ads when searching
-            sortQuery = { adType: -1, createdAt: -1 };
-        } else {
-            sortQuery = { createdAt: -1 };
-        }
-
-        if (sort === 'oldest') sortQuery = { createdAt: 1 };
-        else if (sort === 'price-high') sortQuery = { price: -1 };
-        else if (sort === 'price-low') sortQuery = { price: 1 };
+        let sortQuery = { adType: -1, createdAt: -1 };
+        if (sort === 'oldest') sortQuery = { adType: -1, createdAt: 1 };
+        else if (sort === 'price-high') sortQuery = { adType: -1, price: -1 };
+        else if (sort === 'price-low') sortQuery = { adType: -1, price: 1 };
 
         // Fetch active ads
         let adsQuery = Ad.find(query)
