@@ -517,13 +517,14 @@ const getTransactions = async (req, res) => {
         const limit = parseInt(req.query.limit, 10) || 100;
         const skip = (page - 1) * limit;
 
-        const { tnxId, productId, sellerMobile, sellerId, item, mode, fromDate, toDate } = req.query;
+        const { tnxId, productId, sellerMobile, sellerId, item, mode, fromDate, toDate, status } = req.query;
         let query = {};
 
         if (tnxId) query.tnxId = new RegExp(tnxId, 'i');
         if (sellerMobile) query.mobileNumber = new RegExp(sellerMobile, 'i');
         if (item) query.item = new RegExp(item, 'i');
         if (mode) query.mode = new RegExp(mode, 'i');
+        if (status) query.status = status;
 
         if (productId) {
             if (mongoose.Types.ObjectId.isValid(productId)) {

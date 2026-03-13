@@ -176,8 +176,13 @@ const successPayment = async (req, res) => {
 
                 const ad = await Ad.findById(payment.ad);
                 if (ad) {
+                    const originalStatus = ad.status;
+                    const userDoc = payment.user ? await User.findById(payment.user) : (ad.user ? await User.findById(ad.user) : null);
+                    const isTrusted = userDoc && String(userDoc.merchantTrustStatus || '').trim().toLowerCase() === 'trusted';
+                    const isReviewable = ['pause', 'review', 'pending'].includes(originalStatus);
+
                     // Archive previous promotion if it exists
-                    if (ad.adType === 'Promoted') {
+                    if ((ad.adType || '').toLowerCase() === 'promoted') {
                         ad.promotionHistory = ad.promotionHistory || [];
                         ad.promotionHistory.push({
                             startDate: ad.promoteStartDate || ad.createdAt,
@@ -193,7 +198,25 @@ const successPayment = async (req, res) => {
                     }
 
                     // Update with new promotion details
-                    ad.adType = 'Promoted';
+                    if (isReviewable) {
+                        if (isTrusted) {
+                            ad.status = 'active';
+                            ad.adType = 'Promoted';
+                        } else {
+                            ad.status = 'review';
+                            ad.adType = 'Processing';
+                        }
+                    } else if (originalStatus === 'active') {
+                        ad.adType = 'Promoted';
+                    } else {
+                        if (isTrusted) {
+                            ad.status = 'active';
+                            ad.adType = 'Promoted';
+                        } else {
+                            ad.status = 'review';
+                            ad.adType = 'Processing';
+                        }
+                    }
                     ad.promoteType = promoteType;
                     ad.trafficLink = trafficLink;
                     ad.trafficButtonType = trafficButtonType;
@@ -218,8 +241,8 @@ const successPayment = async (req, res) => {
                     await ad.save();
                 }
 
-                // Automatically upgrade user to Premium when an ad is promoted
-                if (payment.user) {
+                // Automatically upgrade user to Premium only when ad is actually Promoted
+                if (payment.user && ad && (ad.adType || '').toLowerCase() === 'promoted') {
                     await User.findByIdAndUpdate(payment.user, {
                         merchantType: 'Premium'
                     });

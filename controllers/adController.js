@@ -48,48 +48,44 @@ exports.createAd = async (req, res) => {
         }
 
         // Process images
-        // Process images
         let imagePaths = req.files ? req.files.map(file => file.path.replace(/\\/g, "/")) : [];
-        // Removed base64 image processing
 
-        let adStatus = 'active';
+        let adStatus = 'review'; // Default
         let limitReached = false;
         let subCategoryFreeLimit = 1; // Default fallback
+        let pauseReason = null;
 
         if (userId) {
             const user = await User.findById(userId);
             if (user) {
-                // Default pause for Untrusted or missing trust status (moderation)
-                if (user.merchantTrustStatus !== 'Trusted') {
-                    adStatus = 'review';
-                }
+                // 1. Check free post limitations for EVERYONE
+                const subCategoryDoc = await SubCategory.findOne({ name: subCategory });
+                if (subCategoryDoc) {
+                    subCategoryFreeLimit = subCategoryDoc.freePost || 1;
+                    const activeAdCountInSubCategory = await Ad.countDocuments({
+                        user: userId,
+                        subCategory: subCategory,
+                        status: { $in: ['active', 'pending', 'review'] },
+                        adType: { $ne: 'Promoted' }
+                    });
 
-                // Check Category-specific free post limit for non-premium users
-                if (user.merchantType === 'Free') {
-                    const subCategoryDoc = await SubCategory.findOne({ name: subCategory });
-                    if (subCategoryDoc) {
-                        subCategoryFreeLimit = subCategoryDoc.freePost || 1;
-                        const activeAdCountInSubCategory = await Ad.countDocuments({
-                            user: userId,
-                            subCategory,
-                            status: { $in: ['active', 'pending', 'pause', 'review'] }
-                        });
-
-                        if (activeAdCountInSubCategory >= subCategoryFreeLimit) {
-                            adStatus = 'pause';
-                            limitReached = true;
+                    if (activeAdCountInSubCategory >= subCategoryFreeLimit) {
+                        // Limit reached: Pause the ad regardless of trust status
+                        adStatus = 'pause';
+                        limitReached = true;
+                        pauseReason = 'LIMIT_EXCEEDED';
+                    } else {
+                        // Limit NOT reached: Check trust status
+                        if (user.merchantTrustStatus === 'Trusted') {
+                            adStatus = 'active';
+                        } else {
+                            adStatus = 'review';
                         }
                     }
                 }
-
-                // Override: Trusted users always get published directly, bypassing all limits
-                if (user.merchantTrustStatus === 'Trusted') {
-                    adStatus = 'active';
-                    limitReached = false;
-                }
             }
         } else {
-            // Anonymous users are treated as untrusted and moderated
+            // Anonymous users are treated as untrusted and paused/moderated
             adStatus = 'pause';
         }
 
@@ -112,7 +108,8 @@ exports.createAd = async (req, res) => {
             price,
             priceType,
             features: features ? (typeof features === 'string' ? JSON.parse(features) : features) : {},
-            status: adStatus
+            status: adStatus,
+            note: pauseReason
         });
 
         // Set showTill based on settings
@@ -132,10 +129,26 @@ exports.createAd = async (req, res) => {
                     verifiedBy: 'Mobile',
                     verifiedNumber: vInfo.number || phone,
                     verifiedAt: vInfo.at || new Date(),
-                    mobileVerified: true
+                    mobileVerified: true,
+                    lastPostCategory: category,
+                    lastPostSubCategory: subCategory,
+                    lastPostLocation: location,
+                    lastPostSubLocation: subLocation
                 });
             } catch (vErr) {
                 console.error("Error updating verification info:", vErr.message);
+            }
+        } else if (ad.user || userId) {
+            // Even if no verification info, update the last post category and location
+            try {
+                await User.findByIdAndUpdate(ad.user || userId, {
+                    lastPostCategory: category,
+                    lastPostSubCategory: subCategory,
+                    lastPostLocation: location,
+                    lastPostSubLocation: subLocation
+                });
+            } catch (err) {
+                console.error("Error updating user last post data:", err.message);
             }
         }
 
@@ -310,8 +323,9 @@ exports.getAllAdsAdmin = async (req, res) => {
         today.setHours(0, 0, 0, 0);
 
         // Reset ads that haven't been seen today for both delivery and views
-        // Only run this if we are fetching all ads or a large set to avoid too many updates
+        // Also cleanup expired promotions
         if (!adType && !Object.keys(req.query).length) {
+            await exports.cleanupExpiredPromotions();
             await Ad.updateMany(
                 { lastDeliveryDate: { $lt: today } },
                 { $set: { dailyDeliveryCount: 0, lastDeliveryDate: today } }
@@ -327,7 +341,7 @@ exports.getAllAdsAdmin = async (req, res) => {
         const skip = (page - 1) * limit;
 
         const ads = await Ad.find(query)
-            .populate('user', 'name email mobile storeLogo storeBanner merchantType mVerified merchantTrustStatus sellerPageUrl followers')
+            .populate('user', 'name email mobile storeLogo storeBanner merchantType mVerified merchantTrustStatus sellerPageUrl followers rating ratingCount')
             .sort({ createdAt: -1 })
             .skip(skip)
             .limit(limit);
@@ -354,7 +368,7 @@ exports.getAllAdsAdmin = async (req, res) => {
 exports.getAllPromotedAdsAdmin = async (req, res) => {
     try {
         const ads = await Ad.find({ adType: 'Promoted' })
-            .populate('user', 'name email mobile storeLogo storeBanner merchantType mVerified sellerPageUrl followers')
+            .populate('user', 'name email mobile storeLogo storeBanner merchantType mVerified sellerPageUrl followers rating ratingCount')
             .sort({ createdAt: -1 });
 
         res.json({
@@ -379,15 +393,20 @@ exports.updateAdStatus = async (req, res) => {
             return res.status(400).json({ success: false, message: 'Invalid status' });
         }
 
-        const ad = await Ad.findByIdAndUpdate(
-            req.params.id,
-            { status, userUpdated: false, userNewPhotos: false },
-            { new: true }
-        );
-
+        const ad = await Ad.findById(req.params.id);
         if (!ad) {
             return res.status(404).json({ success: false, message: 'Ad not found' });
         }
+
+        // If status is being set to active and it was in Processing adType, upgrade to Promoted
+        if (status === 'active' && (ad.adType || '').toLowerCase() === 'processing') {
+            ad.adType = 'Promoted';
+        }
+
+        ad.status = status;
+        ad.userUpdated = false;
+        ad.userNewPhotos = false;
+        await ad.save();
 
         res.json({
             success: true,
@@ -485,6 +504,9 @@ exports.updateAdDetails = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Ad not found' });
         }
 
+        const originalStatus = ad.status;
+        if (status !== undefined) ad.status = status;
+
         // Update fields
         if (headline) ad.headline = headline;
         if (description) ad.description = description;
@@ -499,17 +521,11 @@ exports.updateAdDetails = async (req, res) => {
         if (url !== undefined) ad.url = url;
         if (actionType) ad.actionType = actionType;
         if (adType) {
-            // If changing to promoted, or re-promoting an already promoted ad
+            // Check if we are upgrading to Promoted or re-activating a Promoted ad
             if (adType === 'Promoted') {
-                // If it was already promoted, check if we should archive the previous performance
-                // Usually if adType was already promoted and we are "re-promoting" (indicated by some flag or date change)
-                // But for manual admin update, let's archive IF there's a significant change or if they explicitly want to start new
-                // For now, let's archive only if it WAS already promoted and they are changing some promotion-specific data?
-                // Actually, let's archive if it was already promoted and we are updating adType to 'Promoted' (which it already was)
-                // Wait, if it was already promoted, we don't necessarily want to archive on every edit.
-                // But if it was EXPIRED or INACTIVE and being reactivated, we definitely should.
-
-                if (ad.adType === 'Promoted' && (ad.status !== 'active' || ad.promoteEndDate < new Date())) {
+                // Determine if we should archive the existing promotion metrics
+                // We archive if it was already Promoted but is currently restricted (paused/review/expired)
+                if (ad.adType === 'Promoted' && (originalStatus !== 'active' || (ad.promoteEndDate && ad.promoteEndDate < new Date()))) {
                     ad.promotionHistory = ad.promotionHistory || [];
                     ad.promotionHistory.push({
                         startDate: ad.promoteStartDate || ad.createdAt,
@@ -527,16 +543,45 @@ exports.updateAdDetails = async (req, res) => {
                     ad.promoteStartDate = new Date();
                     ad.promotedViews = 0;
                     ad.promotedDeliveryCount = 0;
-                } else if (ad.adType !== 'Promoted') {
-                    // Changing from Free to Promoted for the first time
+                } else if (!['promoted', 'processing'].includes((ad.adType || '').toLowerCase())) {
+                    // Changing from Free to a Promotional type for the first time
                     ad.promoteStartDate = new Date();
                     ad.promotedViews = 0;
                     ad.promotedDeliveryCount = 0;
                 }
+
+                // TRUST-BASED LOGIC
+                // Fetch user to check trust status
+                let isTrusted = false;
+                if (ad.user) {
+                    const userDoc = await User.findById(ad.user);
+                    if (userDoc && userDoc.merchantTrustStatus === 'Trusted') {
+                        isTrusted = true;
+                    }
+                }
+
+                const isReviewableState = ['pause', 'review', 'pending', 'inactive'].includes(originalStatus) || ['review', 'pause'].includes(ad.status);
+                const currentAdTypeLower = (ad.adType || '').toLowerCase();
+                const isNewPromotion = !['promoted', 'processing'].includes(currentAdTypeLower);
+
+                if (!isTrusted && (isNewPromotion || isReviewableState)) {
+                    // Force untrusted promotion to review
+                    ad.adType = 'Processing';
+                    ad.status = 'review';
+                } else {
+                    // Trusted user or already promoted active ad
+                    ad.adType = 'Promoted';
+                    // If it was restricted but is now allowed (trusted or from active), ensure it's active
+                    if (['pause', 'review', 'pending'].includes(ad.status)) {
+                        ad.status = 'active';
+                    }
+                }
+            } else {
+                ad.adType = adType;
             }
-            ad.adType = adType;
-            // If admin promotes an ad manually, upgrade the user to Premium
-            if (adType === 'Promoted' && ad.user) {
+
+            // If it ends up as Promoted (after trust check), ensure user is Premium
+            if (ad.adType === 'Promoted' && ad.user) {
                 await User.findByIdAndUpdate(ad.user, { merchantType: 'Premium' });
             }
         }
@@ -588,7 +633,6 @@ exports.updateAdDetails = async (req, res) => {
             }
         }
         if (priceType !== undefined) ad.priceType = priceType;
-        if (status !== undefined) ad.status = status;
         if (features !== undefined) ad.features = typeof features === 'string' ? JSON.parse(features) : features;
         if (req.body.pendingDescription !== undefined) ad.pendingDescription = req.body.pendingDescription;
 
@@ -597,11 +641,11 @@ exports.updateAdDetails = async (req, res) => {
             ad.description = ad.pendingDescription;
             ad.pendingDescription = undefined;
             ad.userUpdated = false; // Reset the flag once moderated
-            if (ad.status === 'review') ad.status = 'active'; // Restore visibility if it was in review due to edit
+            if (ad.status === 'review' && (ad.adType || '').toLowerCase() !== 'processing') ad.status = 'active'; // Restore visibility if it was in review due to edit
         } else if (pendingDescriptionAction === 'decline') {
             ad.pendingDescription = undefined;
             ad.userUpdated = false;
-            if (ad.status === 'review') ad.status = 'active'; // Restore even if declined
+            if (ad.status === 'review' && (ad.adType || '').toLowerCase() !== 'processing') ad.status = 'active'; // Restore even if declined
         }
 
         // Process images: Combine remaining (existing) images + new uploads
@@ -702,7 +746,6 @@ exports.getFeedAdsPublic = async (req, res) => {
                 { description: searchRegex }
             ];
 
-            // If any word in search query is a valid ObjectId, search by _id or user ID too
             const words = search.trim().split(/\s+/);
             words.forEach(word => {
                 if (mongoose.Types.ObjectId.isValid(word)) {
@@ -712,32 +755,49 @@ exports.getFeedAdsPublic = async (req, res) => {
             });
         }
 
-        let sortQuery = {};
-        if (search) {
-            sortQuery = { adType: 1, createdAt: -1 };
-        } else {
-            sortQuery = { createdAt: -1 };
-        }
-
+        let sortQuery = { createdAt: -1 };
         if (sort === 'oldest') sortQuery = { createdAt: 1 };
         else if (sort === 'price-high') sortQuery = { price: -1 };
         else if (sort === 'price-low') sortQuery = { price: 1 };
 
         const pageNum = parseInt(page);
-        const totalLimit = 22;
+        
+        // Fetch 2 Promoted Ads per page
+        const promotedAdsPromise = Ad.find({ ...query, adType: 'Promoted' })
+            .select('headline description features views price images location subLocation category subCategory createdAt deliveryCount user adType phone hidePhone additionalPhones promotedViews promotedDeliveryCount dailyViewsCount dailyDeliveryCount promoteStartDate promoteEndDate promoteType trafficLink trafficButtonType promoteTag')
+            .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType createdAt verifiedBy mVerified sellerPageUrl followers rating ratingCount')
+            .sort(sortQuery)
+            .skip((pageNum - 1) * 2)
+            .limit(2);
 
-        // Unified query to prioritize Promoted ads, then apply chosen sort
-        const finalSort = { adType: -1, ...sortQuery };
-
-        let ads = await Ad.find(query)
+        // Fetch 20 Free Ads per page
+        const freeAdsPromise = Ad.find({ ...query, adType: { $ne: 'Promoted' } })
             .select('headline description features views price images location subLocation category subCategory createdAt deliveryCount user adType phone hidePhone additionalPhones promotedViews promotedDeliveryCount dailyViewsCount dailyDeliveryCount promoteStartDate promoteEndDate')
-            .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType createdAt verifiedBy mVerified sellerPageUrl followers')
-            .sort(finalSort)
-            .skip((pageNum - 1) * totalLimit)
-            .limit(totalLimit);
+            .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType createdAt verifiedBy mVerified sellerPageUrl followers rating ratingCount')
+            .sort(sortQuery)
+            .skip((pageNum - 1) * 20)
+            .limit(20);
 
-        // Optimize images to send only the first one
-        const optimizedAds = ads.map(ad => {
+        // Fetch 2 Categories per page for interleaving
+        const categoriesPromise = Category.find({ postCount: { $gt: 0 } })
+            .select('name icon _id')
+            .sort({ order: 1 })
+            .skip((pageNum - 1) * 2)
+            .limit(2);
+
+        const [promotedAds, freeAds, interleavedCategories] = await Promise.all([
+            promotedAdsPromise,
+            freeAdsPromise,
+            categoriesPromise
+        ]);
+
+        if (pageNum === 1) {
+            exports.cleanupExpiredPromotions().catch(err => console.error("Feed Cleanup Error:", err));
+        }
+
+        const allAds = [...promotedAds, ...freeAds];
+
+        const optimizedAds = allAds.map(ad => {
             const adObj = ad.toObject();
             if (adObj.images && adObj.images.length > 0) {
                 adObj.images = [adObj.images[0]];
@@ -745,19 +805,15 @@ exports.getFeedAdsPublic = async (req, res) => {
             return adObj;
         });
 
-        // Impression counting logic
-        if (ads.length > 0) {
-            const adIds = ads.map(ad => ad._id);
+        // Impression counting
+        if (allAds.length > 0) {
+            const adIds = allAds.map(ad => ad._id);
             const today = new Date();
             today.setHours(0, 0, 0, 0);
 
             await Ad.updateMany(
                 { _id: { $in: adIds }, lastDeliveryDate: { $lt: today } },
                 { $set: { dailyDeliveryCount: 0, lastDeliveryDate: new Date() } }
-            );
-            await Ad.updateMany(
-                { _id: { $in: adIds }, lastViewsDate: { $lt: today } },
-                { $set: { dailyViewsCount: 0, lastViewsDate: new Date() } }
             );
 
             await Ad.updateMany(
@@ -773,8 +829,9 @@ exports.getFeedAdsPublic = async (req, res) => {
 
         res.json({
             success: true,
-            hasMore: ads.length === totalLimit,
-            data: optimizedAds
+            hasMore: freeAds.length === 20 || promotedAds.length === 2,
+            data: optimizedAds,
+            feedCategories: interleavedCategories
         });
     } catch (err) {
         console.error("Error fetching feed ads:", err.message);
@@ -838,7 +895,7 @@ exports.getAllAdsPublic = async (req, res) => {
         // Fetch active ads
         let adsQuery = Ad.find(query)
             .select('headline description features views price images location subLocation category subCategory createdAt deliveryCount user adType phone hidePhone additionalPhones promotedViews promotedDeliveryCount dailyViewsCount dailyDeliveryCount promoteStartDate promoteEndDate')
-            .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType createdAt verifiedBy mVerified sellerPageUrl followers')
+            .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType createdAt verifiedBy mVerified sellerPageUrl followers rating ratingCount')
             .sort(sortQuery);
 
         if (limit) {
@@ -943,7 +1000,7 @@ exports.getAdsCount = async (req, res) => {
 exports.getSingleAdPublic = async (req, res) => {
     try {
         const ad = await Ad.findById(req.params.id)
-            .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType verifiedBy mVerified');
+            .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType verifiedBy mVerified rating ratingCount');
 
         if (!ad) {
             return res.status(404).json({ success: false, message: 'Ad not found' });
@@ -971,7 +1028,7 @@ exports.getSingleAdPublic = async (req, res) => {
         }
 
         const updatedAd = await Ad.findByIdAndUpdate(req.params.id, update, { new: true })
-            .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType verifiedBy mVerified followers');
+            .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType verifiedBy mVerified followers rating ratingCount');
 
         res.json({
             success: true,
@@ -1210,8 +1267,30 @@ exports.promoteAd = async (req, res) => {
         }
 
         // Update ad fields
-        ad.status = 'active';
-        ad.adType = 'Promoted';
+        // Update ad fields based on user trust status
+        const user = await User.findById(req.user.id);
+        const isReviewable = ['pause', 'review', 'pending'].includes(ad.status);
+
+        if (isReviewable) {
+            if (user && user.merchantTrustStatus === 'Trusted') {
+                ad.status = 'active';
+                ad.adType = 'Promoted';
+            } else {
+                ad.status = 'review';
+                ad.adType = 'Processing';
+            }
+        } else if (ad.status === 'active') {
+            ad.adType = 'Promoted';
+        } else {
+            // For other statuses like rejected or expired, if promoted, move to active (trusted) or review (untrusted)
+            if (user && user.merchantTrustStatus === 'Trusted') {
+                ad.status = 'active';
+                ad.adType = 'Promoted';
+            } else {
+                ad.status = 'review';
+                ad.adType = 'Processing';
+            }
+        }
         ad.promoteType = promoteType;
         if (promoteType === 'traffic') {
             ad.trafficLink = trafficLink;
@@ -1233,13 +1312,13 @@ exports.promoteAd = async (req, res) => {
         newShowTill.setDate(newShowTill.getDate() + inactiveDays);
         ad.showTill = newShowTill;
 
-        // Archive previous promotion if it exists
-        if (ad.adType === 'Promoted') {
-            ad.promotionHistory = ad.promotionHistory || [];
-            ad.promotionHistory.push({
-                startDate: ad.promoteStartDate || ad.createdAt,
-                endDate: ad.promoteEndDate || new Date(),
-                adType: ad.adType,
+         // Archive previous promotion if it exists
+         if ((ad.adType || '').toLowerCase() === 'promoted') {
+             ad.promotionHistory = ad.promotionHistory || [];
+             ad.promotionHistory.push({
+                 startDate: ad.promoteStartDate || ad.createdAt,
+                 endDate: ad.promoteEndDate || new Date(),
+                 adType: ad.adType,
                 promoteType: ad.promoteType,
                 promoteTag: ad.promoteTag,
                 budget: ad.promoteBudget,
@@ -1322,6 +1401,17 @@ exports.createAdAdmin = async (req, res) => {
             finalShowTill = tillDate;
         }
 
+        let finalStatus = req.body.status || 'active';
+        let finalAdType = adType || 'Free';
+
+        if (finalAdType === 'Promoted') {
+            const isTrusted = targetUser && targetUser.merchantTrustStatus === 'Trusted';
+            if (!isTrusted) {
+                finalStatus = 'review';
+                finalAdType = 'Processing';
+            }
+        }
+
         const newAd = new Ad({
             user: targetUser ? targetUser._id : (req.admin ? req.admin.id : null),
             headline,
@@ -1336,15 +1426,15 @@ exports.createAdAdmin = async (req, res) => {
             url,
             actionType,
             images: imagePaths,
-            adType: adType || 'Free',
+            adType: finalAdType,
             price,
             priceType: priceType || 'Negotiable',
             merchantID,
             showTill: finalShowTill,
             note,
             features: features ? (typeof features === 'string' ? JSON.parse(features) : features) : {},
-            status: req.body.status || 'active',
-            promoteStartDate: adType === 'Promoted' ? new Date() : undefined
+            status: finalStatus,
+            promoteStartDate: (finalAdType === 'Promoted' || finalAdType === 'Processing') ? new Date() : undefined
         });
 
         const ad = await newAd.save();
@@ -1472,31 +1562,38 @@ exports.toggleAdStatusMyAd = async (req, res) => {
         // We don't want to allow toggling from 'pending', 'rejected', 'deleted', etc.
         if (ad.status === 'active') {
             ad.status = 'pause';
-        } else if (ad.status === 'pause') {
-            // Check for limit if trying to activate
+        } else if (ad.status === 'pause' || ad.status === 'review') {
+            // Check for limit if trying to activate or move from review (if they reached this point)
             const user = await User.findById(req.user.id);
-            if (user && user.merchantTrustStatus !== 'Trusted') {
+            if (user) {
                 const subCatDoc = await SubCategory.findOne({ name: ad.subCategory });
                 const freePostLimit = subCatDoc ? (subCatDoc.freePost || 1) : 1;
 
                 const activeAdCountInSubCategory = await Ad.countDocuments({
                     user: req.user.id,
                     subCategory: ad.subCategory,
-                    status: 'active'
+                    status: { $in: ['active', 'pending', 'review'] },
+                    adType: { $ne: 'Promoted' }
                 });
 
                 if (activeAdCountInSubCategory >= freePostLimit) {
                     return res.status(400).json({
                         success: false,
-                        message: `Limit reached for ${ad.subCategory}. You can have maximum ${freePostLimit} active ads in this category.`
+                        message: `Limit reached for ${ad.subCategory}. You can have maximum ${freePostLimit} active ads in this category. Promote this ad to bypass the limit.`
                     });
                 }
+
+                // If within limit, check trust status
+                if (user.merchantTrustStatus === 'Trusted') {
+                    ad.status = 'active';
+                } else {
+                    ad.status = 'review';
+                }
             }
-            ad.status = 'active';
         } else {
             return res.status(400).json({
                 success: false,
-                message: `Cannot toggle status from ${ad.status}. Ad must be Active or Paused.`
+                message: `Cannot toggle status from ${ad.status}.`
             });
         }
 
@@ -1510,5 +1607,63 @@ exports.toggleAdStatusMyAd = async (req, res) => {
     } catch (err) {
         console.error("Error toggling ad status:", err.message);
         res.status(500).json({ success: false, message: 'Server Error' });
+    }
+};
+
+/**
+ * Automatically cleanup expired promotions
+ * Moves expired 'Promoted' ads back to 'Free' status and archives their performance.
+ */
+exports.cleanupExpiredPromotions = async () => {
+    try {
+        const now = new Date();
+        const expiredAds = await Ad.find({
+            adType: 'Promoted',
+            promoteEndDate: { $lt: now }
+        });
+
+        if (expiredAds.length > 0) {
+            console.log(`[Ad Cleanup] Found ${expiredAds.length} expired promotions at ${now.toISOString()}`);
+
+            for (const ad of expiredAds) {
+                // 1. Archive current promotion metrics to history
+                ad.promotionHistory = ad.promotionHistory || [];
+                ad.promotionHistory.push({
+                    startDate: ad.promoteStartDate || ad.createdAt,
+                    endDate: ad.promoteEndDate,
+                    adType: ad.adType,
+                    promoteType: ad.promoteType,
+                    promoteTag: ad.promoteTag,
+                    budget: ad.promoteBudget,
+                    views: ad.promotedViews || 0,
+                    deliveryCount: ad.promotedDeliveryCount || 0,
+                    createdAt: new Date()
+                });
+
+                // 2. Clear promotion metadata but keep the ad active as a Free post
+                ad.adType = 'Free';
+                ad.promoteType = undefined;
+                ad.promoteTag = '';
+                ad.trafficLink = undefined;
+                ad.trafficButtonType = undefined;
+                ad.targetLocations = [];
+                ad.promoteBudget = undefined;
+                ad.promoteDuration = undefined;
+                ad.promoteStartDate = undefined;
+                ad.promoteEndDate = undefined;
+                ad.estimatedReach = undefined;
+                ad.promotedViews = 0;
+                ad.promotedDeliveryCount = 0;
+
+                // Save the changes
+                await ad.save();
+                console.log(`[Ad Cleanup] Ad ${ad._id} reverted to Free post.`);
+            }
+            return expiredAds.length;
+        }
+        return 0;
+    } catch (err) {
+        console.error("[Ad Cleanup] Critical error during promotion cleanup:", err);
+        throw err;
     }
 };

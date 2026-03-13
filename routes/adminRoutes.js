@@ -138,25 +138,46 @@ router.delete('/promotion-plans/:id', verifyToken, checkPermission('Promote Mana
 
 // POST manual product promote
 router.post('/manual-promote', verifyToken, checkPermission('Promote Management'), async (req, res) => {
-    const { productId, amount, runTill, sellerId, isVerifyBadge, level } = req.body;
+    const { productId, amount, runTill, sellerId, isVerifyBadge, level, promoteType, trafficLink } = req.body;
     try {
         let ad = null;
         if (productId) {
             ad = await Ad.findById(productId);
             if (!ad) return res.status(404).json({ message: 'Product not found' });
 
-            // Update Ad promotion details
-            ad.adType = 'Promoted';
-            ad.promoteBudget = Number(amount);
-            ad.promoteDuration = Number(runTill);
+            const originalStatus = ad.status;
+            const adOwner = ad.user ? await User.findById(ad.user) : null;
+            const isTrusted = adOwner && String(adOwner.merchantTrustStatus || '').trim().toLowerCase() === 'trusted';
 
-            // Calculate promoteEndDate/showTill from runTill (days)
-            const days = parseInt(runTill) || 0;
-            if (days > 0) {
-                const endDate = new Date();
-                endDate.setDate(endDate.getDate() + days);
-                ad.promoteEndDate = endDate;
-                ad.showTill = endDate;
+            // Update Ad promotion details
+            ad.promoteBudget = Number(amount);
+
+            // Set Promote Type and Traffic Link
+            if (promoteType) ad.promoteType = promoteType;
+            if (trafficLink) ad.trafficLink = trafficLink;
+            if (promoteType === 'traffic') ad.trafficButtonType = 'Visit';
+
+            if (runTill) {
+                const parsedRunTill = Number(runTill);
+                if (!isNaN(parsedRunTill) && parsedRunTill > 0 && String(runTill).indexOf('-') === -1) {
+                    ad.promoteDuration = parsedRunTill;
+                    const endDate = new Date();
+                    endDate.setDate(endDate.getDate() + parsedRunTill);
+                    ad.promoteEndDate = endDate;
+                    ad.showTill = endDate;
+                } else {
+                    const targetDate = new Date(runTill);
+                    if (targetDate.toString() !== 'Invalid Date') {
+                        targetDate.setHours(23, 59, 59, 999);
+                        ad.promoteEndDate = targetDate;
+                        ad.showTill = targetDate;
+
+                        const now = new Date();
+                        const diffTime = targetDate.getTime() - now.getTime();
+                        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                        ad.promoteDuration = diffDays > 0 ? diffDays : 0;
+                    }
+                }
             }
 
             // Handle Level/Label
@@ -171,17 +192,23 @@ router.post('/manual-promote', verifyToken, checkPermission('Promote Management'
                 }
             }
 
-            ad.status = 'active';
+            // Trust gate: if ad is pause/review and owner is untrusted, keep it in review + processing
+            if (['pause', 'review'].includes(originalStatus) && !isTrusted) {
+                ad.status = 'review';
+                ad.adType = 'Processing';
+            } else {
+                ad.status = 'active';
+                ad.adType = 'Promoted';
+            }
             await ad.save();
 
-            // Automatically upgrade user to Premium when an ad is promoted manually
-            if (ad.user) {
+            // Automatically upgrade user to Premium only when ad is actually Promoted
+            if (ad.user && (ad.adType || '').toLowerCase() === 'promoted') {
                 await User.findByIdAndUpdate(ad.user, { merchantType: 'Premium' });
                 console.log(`✅ User ${ad.user} upgraded to Premium via manual ad promotion`);
             }
 
             // Record Transaction for Ad Promotion
-            const adOwner = await User.findById(ad.user);
             const transaction = new Transaction({
                 tnxId: `ADMIN-AD-${Date.now()}`,
                 mode: 'Admin',
@@ -202,12 +229,11 @@ router.post('/manual-promote', verifyToken, checkPermission('Promote Management'
             const user = await User.findById(sellerId);
             if (user) {
                 if (isVerifyBadge === 'Yes') {
-                    user.verifiedBy = 'Admin';
                     user.merchantTrustStatus = 'Trusted';
+                    user.mVerified = true;
                 } else if (isVerifyBadge === 'No') {
-                    // Option to remove verification if explicitly set to No
-                    user.verifiedBy = 'Not Verified';
                     user.merchantTrustStatus = 'Untrusted';
+                    user.mVerified = false;
                 }
                 await user.save();
 

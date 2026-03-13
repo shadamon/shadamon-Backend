@@ -140,4 +140,11 @@ const startServer = async () => {
     }
 };
 
+// Automated Background Tasks
+const adController = require('./controllers/adController');
+setInterval(() => {
+    console.log('🕒 Running scheduled promotion cleanup...');
+    adController.cleanupExpiredPromotions().catch(err => console.error("Auto Cleanup Failed", err));
+}, 1000 * 60 * 60); // Run every 1 hour
+
 startServer();
