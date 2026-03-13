@@ -156,7 +156,7 @@ const successPayment = async (req, res) => {
                     isHighlight,
                     highlightType,
                     isPostLevel,
-                    selectedLabel
+                    selectedLabels
                 } = payment.promotionDetails;
 
                 // Map highlightType to promoteTag if highlighted
@@ -181,8 +181,34 @@ const successPayment = async (req, res) => {
                     const isTrusted = userDoc && String(userDoc.merchantTrustStatus || '').trim().toLowerCase() === 'trusted';
                     const isReviewable = ['pause', 'review', 'pending'].includes(originalStatus);
 
+                    // If the post is already running a promotion, carry over the remaining (unspent) budget
+                    // so a re-promotion behaves like a "top-up" instead of discarding the remaining value.
+                    let carriedOverBudget = 0;
+                    try {
+                        const prevTypeLower = String(ad.adType || '').trim().toLowerCase();
+                        const now = new Date();
+                        const prevStartMs = ad.promoteStartDate ? new Date(ad.promoteStartDate).getTime() : NaN;
+                        const prevDuration = Number(ad.promoteDuration) || 0;
+                        const prevBudget = Number(ad.promoteBudget) || 0;
+                        const isRunningPrev = (prevTypeLower === 'promoted' || prevTypeLower === 'processing') &&
+                            ad.promoteEndDate &&
+                            new Date(ad.promoteEndDate) > now;
+
+                        if (isRunningPrev && prevDuration > 0 && prevBudget > 0 && Number.isFinite(prevStartMs)) {
+                            const MS_PER_DAY = 24 * 60 * 60 * 1000;
+                            const daysElapsed = Math.min(prevDuration, Math.max(1, Math.floor((now.getTime() - prevStartMs) / MS_PER_DAY) + 1));
+                            const remainingDays = Math.max(0, prevDuration - daysElapsed);
+                            carriedOverBudget = Math.round((prevBudget / prevDuration) * remainingDays);
+                        }
+                    } catch (_) {
+                        carriedOverBudget = 0;
+                    }
+
+                    const newBudget = Number(promoteBudget) || 0;
+                    const mergedBudget = Math.max(0, Math.round(newBudget + carriedOverBudget));
+
                     // Archive previous promotion if it exists
-                    if ((ad.adType || '').toLowerCase() === 'promoted') {
+                    if (['promoted', 'processing'].includes(String(ad.adType || '').trim().toLowerCase())) {
                         ad.promotionHistory = ad.promotionHistory || [];
                         ad.promotionHistory.push({
                             startDate: ad.promoteStartDate || ad.createdAt,
@@ -191,6 +217,8 @@ const successPayment = async (req, res) => {
                             promoteType: ad.promoteType,
                             promoteTag: ad.promoteTag,
                             budget: ad.promoteBudget,
+                            targetD: ad.targetD,
+                            targetValue: ad.targetValue,
                             views: ad.promotedViews || 0,
                             deliveryCount: ad.promotedDeliveryCount || 0,
                             createdAt: new Date()
@@ -224,14 +252,52 @@ const successPayment = async (req, res) => {
                     ad.promoteDuration = promoteDuration;
                     ad.promoteStartDate = new Date(); // Start tracking performance from NOW
                     ad.promoteEndDate = new Date(promoteEndDate);
-                    ad.promoteBudget = promoteBudget;
+                    ad.promoteBudget = mergedBudget;
                     ad.estimatedReach = estimatedReach;
                     ad.promoteTag = promoteTag;
                     ad.showTill = newShowTill;
 
-                    // If post level / label was selected
-                    if (isPostLevel) {
-                        ad.label = selectedLabel;
+                    // Set target totals for this promotion (Target/D and Target Value)
+                    let totalTargetValue = 0;
+                    if (estimatedReach !== undefined && estimatedReach !== null) {
+                        const reachStr = String(estimatedReach);
+                        const match = reachStr.match(/(\d+)\s*-\s*(\d+)/);
+                        if (match) {
+                            totalTargetValue = parseInt(match[1], 10) || 0;
+                        } else {
+                            const asNum = parseInt(reachStr.replace(/[^\d]/g, ''), 10);
+                            totalTargetValue = isNaN(asNum) ? 0 : asNum;
+                        }
+                    }
+                    // Ensure targets never go below the merged budget (top-up support)
+                    if (mergedBudget > 0) {
+                        totalTargetValue = Math.max(totalTargetValue, mergedBudget);
+                    }
+                    if (totalTargetValue > 0 && promoteDuration) {
+                        ad.targetValue = totalTargetValue;
+                        ad.targetD = String(Math.max(0, Math.round(totalTargetValue / Number(promoteDuration || 1))));
+                    } else {
+                        ad.targetValue = 0;
+                        ad.targetD = '0';
+                    }
+
+                    // Support labels (persist for both user/admin flows)
+                    const incomingLabels = Array.isArray(selectedLabels)
+                        ? selectedLabels
+                        : (selectedLabels ? [selectedLabels] : []);
+                    const cleanedLabels = (incomingLabels || [])
+                        .map(l => (typeof l === 'string' ? l.trim() : String(l || '').trim()))
+                        .filter(Boolean);
+
+                    // If user explicitly chose Post Level, allow clearing by sending an empty list.
+                    if (isPostLevel === true) {
+                        ad.labels = Array.from(new Set(cleanedLabels));
+                    } else if (cleanedLabels.length > 0) {
+                        // Backward/forward compatibility: some clients may send labels without isPostLevel.
+                        ad.labels = Array.from(new Set(cleanedLabels));
+                    } else if (promoteTag && promoteTag !== 'All') {
+                        // If this promotion is a highlight tag (Urgent/Discount/etc), store it as a label too.
+                        ad.labels = [promoteTag];
                     }
 
                     // Reset performance metrics for the new period

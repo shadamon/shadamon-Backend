@@ -1,5 +1,7 @@
 const User = require('../models/User');
 const Notification = require('../models/Notification');
+const Ad = require('../models/Ad');
+const Transaction = require('../models/Transaction');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { fileToBase64, downloadAndSaveImage } = require('../utils/imageHelper');
@@ -530,13 +532,16 @@ const Payment = require('../models/Payment');
 // @access  Private
 const getUserActivity = async (req, res) => {
     try {
+        const followingPage = parseInt(req.query.followingPage, 10) || 1;
+        const followingLimit = req.query.followingLimit !== undefined ? parseInt(req.query.followingLimit, 10) : undefined;
+        const favoritesPage = parseInt(req.query.favoritesPage, 10) || 1;
+        const favoritesLimit = req.query.favoritesLimit !== undefined ? parseInt(req.query.favoritesLimit, 10) : undefined;
+        const paymentsPage = parseInt(req.query.paymentsPage, 10) || 1;
+        const paymentsLimit = req.query.paymentsLimit !== undefined ? parseInt(req.query.paymentsLimit, 10) : undefined;
+
+        const shouldPaginate = followingLimit !== undefined || favoritesLimit !== undefined || paymentsLimit !== undefined;
+
         const user = await User.findById(req.user.id)
-            .populate('following', 'name storeName photo')
-            .populate({
-                path: 'favorites',
-                select: 'headline price images user',
-                populate: { path: 'user', select: 'name storeName' }
-            })
             .populate({
                 path: 'notifyPreferences.ad',
                 select: 'headline price images user'
@@ -546,14 +551,96 @@ const getUserActivity = async (req, res) => {
             return res.status(404).json({ message: 'User not found' });
         }
 
-        const payments = await Payment.find({ user: req.user.id }).sort({ createdAt: -1 });
+        const followingTotal = Array.isArray(user.following) ? user.following.length : 0;
+        const favoritesTotal = Array.isArray(user.favorites) ? user.favorites.length : 0;
+        const paymentsTotal = await Transaction.countDocuments({ sellerId: req.user.id });
+
+        // Backward compatibility: if no pagination params provided, return full lists like before.
+        if (!shouldPaginate) {
+            await user.populate('following', 'name storeName photo');
+            await user.populate({
+                path: 'favorites',
+                select: 'headline price images user',
+                populate: { path: 'user', select: 'name storeName' }
+            });
+
+            const payments = await Payment.find({ user: req.user.id }).sort({ createdAt: -1 });
+            const transactions = await Transaction.find({ sellerId: req.user.id }).sort({ payTime: -1, createdAt: -1 });
+
+            return res.json({
+                following: user.following,
+                followingTotal,
+                favorites: user.favorites,
+                favoritesTotal,
+                paymentsTotal,
+                notifyCategories: user.notifyCategories,
+                notifyPreferences: user.notifyPreferences,
+                payments,
+                transactions
+            });
+        }
+
+        const safeFollowingLimit = Number.isFinite(followingLimit) ? followingLimit : 5;
+        const safeFavoritesLimit = Number.isFinite(favoritesLimit) ? favoritesLimit : 5;
+        const safePaymentsLimit = paymentsLimit !== undefined && Number.isFinite(paymentsLimit) ? paymentsLimit : 5;
+
+        const followingSkip = safeFollowingLimit > 0 ? (Math.max(1, followingPage) - 1) * safeFollowingLimit : 0;
+        const favoritesSkip = safeFavoritesLimit > 0 ? (Math.max(1, favoritesPage) - 1) * safeFavoritesLimit : 0;
+        const paymentsSkip = safePaymentsLimit > 0 ? (Math.max(1, paymentsPage) - 1) * safePaymentsLimit : 0;
+
+        // Preserve original order by slicing the stored ObjectId arrays first, then fetching documents.
+        const followingIds = safeFollowingLimit > 0
+            ? (user.following || []).slice(followingSkip, followingSkip + safeFollowingLimit)
+            : [];
+        const favoriteIds = safeFavoritesLimit > 0
+            ? (user.favorites || []).slice(favoritesSkip, favoritesSkip + safeFavoritesLimit)
+            : [];
+
+        const [followingDocs, favoriteDocs, payments, transactions] = await Promise.all([
+            followingIds.length > 0
+                ? User.find({ _id: { $in: followingIds } }).select('name storeName photo sellerPageUrl mVerified').lean()
+                : Promise.resolve([]),
+            favoriteIds.length > 0
+                ? Ad.find({ _id: { $in: favoriteIds } })
+                    .select('headline price images user')
+                    .populate('user', 'name storeName')
+                    .lean()
+                : Promise.resolve([]),
+            Payment.find({ user: req.user.id }).sort({ createdAt: -1 }),
+            safePaymentsLimit > 0
+                ? Transaction.find({ sellerId: req.user.id })
+                    .sort({ payTime: -1, createdAt: -1 })
+                    .skip(paymentsSkip)
+                    .limit(safePaymentsLimit)
+                    .select('tnxId mode sellerId productId mobileNumber amount payType payeeName item status payTime createdAt')
+                    .populate('productId', 'promoteDuration')
+                    .lean()
+                : Promise.resolve([])
+        ]);
+
+        const followingMap = new Map(followingDocs.map(u => [String(u._id), u]));
+        const favoritesMap = new Map(favoriteDocs.map(a => [String(a._id), a]));
+
+        const orderedFollowing = followingIds.map(id => followingMap.get(String(id))).filter(Boolean);
+        const orderedFavorites = favoriteIds.map(id => favoritesMap.get(String(id))).filter(Boolean);
+
+        const followingHasMore = safeFollowingLimit > 0 ? (followingSkip + safeFollowingLimit < followingTotal) : false;
+        const favoritesHasMore = safeFavoritesLimit > 0 ? (favoritesSkip + safeFavoritesLimit < favoritesTotal) : false;
+        const paymentsHasMore = safePaymentsLimit > 0 ? (paymentsSkip + safePaymentsLimit < paymentsTotal) : false;
 
         res.json({
-            following: user.following,
-            favorites: user.favorites,
+            following: orderedFollowing,
+            followingTotal,
+            followingHasMore,
+            favorites: orderedFavorites,
+            favoritesTotal,
+            favoritesHasMore,
+            paymentsTotal,
+            paymentsHasMore,
             notifyCategories: user.notifyCategories,
             notifyPreferences: user.notifyPreferences,
-            payments
+            payments,
+            transactions
         });
     } catch (err) {
         console.error('Error fetching activity:', err);

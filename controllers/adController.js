@@ -534,6 +534,8 @@ exports.updateAdDetails = async (req, res) => {
                         promoteType: ad.promoteType,
                         promoteTag: ad.promoteTag,
                         budget: ad.promoteBudget,
+                        targetD: ad.targetD,
+                        targetValue: ad.targetValue,
                         views: ad.promotedViews || 0,
                         deliveryCount: ad.promotedDeliveryCount || 0,
                         createdAt: new Date()
@@ -761,10 +763,10 @@ exports.getFeedAdsPublic = async (req, res) => {
         else if (sort === 'price-low') sortQuery = { price: 1 };
 
         const pageNum = parseInt(page);
-        
+
         // Fetch 2 Promoted Ads per page
         const promotedAdsPromise = Ad.find({ ...query, adType: 'Promoted' })
-            .select('headline description features views price images location subLocation category subCategory createdAt deliveryCount user adType phone hidePhone additionalPhones promotedViews promotedDeliveryCount dailyViewsCount dailyDeliveryCount promoteStartDate promoteEndDate promoteType trafficLink trafficButtonType promoteTag')
+            .select('headline description features labels views price images location subLocation category subCategory createdAt deliveryCount user adType phone hidePhone additionalPhones promotedViews promotedDeliveryCount dailyViewsCount dailyDeliveryCount promoteStartDate promoteEndDate promoteType trafficLink trafficButtonType promoteTag')
             .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType createdAt verifiedBy mVerified sellerPageUrl followers rating ratingCount')
             .sort(sortQuery)
             .skip((pageNum - 1) * 2)
@@ -772,7 +774,7 @@ exports.getFeedAdsPublic = async (req, res) => {
 
         // Fetch 20 Free Ads per page
         const freeAdsPromise = Ad.find({ ...query, adType: { $ne: 'Promoted' } })
-            .select('headline description features views price images location subLocation category subCategory createdAt deliveryCount user adType phone hidePhone additionalPhones promotedViews promotedDeliveryCount dailyViewsCount dailyDeliveryCount promoteStartDate promoteEndDate')
+            .select('headline description features labels views price images location subLocation category subCategory createdAt deliveryCount user adType phone hidePhone additionalPhones promotedViews promotedDeliveryCount dailyViewsCount dailyDeliveryCount promoteStartDate promoteEndDate')
             .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType createdAt verifiedBy mVerified sellerPageUrl followers rating ratingCount')
             .sort(sortQuery)
             .skip((pageNum - 1) * 20)
@@ -894,7 +896,7 @@ exports.getAllAdsPublic = async (req, res) => {
 
         // Fetch active ads
         let adsQuery = Ad.find(query)
-            .select('headline description features views price images location subLocation category subCategory createdAt deliveryCount user adType phone hidePhone additionalPhones promotedViews promotedDeliveryCount dailyViewsCount dailyDeliveryCount promoteStartDate promoteEndDate')
+            .select('headline description features labels views price images location subLocation category subCategory createdAt deliveryCount user adType phone hidePhone additionalPhones promotedViews promotedDeliveryCount dailyViewsCount dailyDeliveryCount promoteStartDate promoteEndDate')
             .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType createdAt verifiedBy mVerified sellerPageUrl followers rating ratingCount')
             .sort(sortQuery);
 
@@ -1266,6 +1268,44 @@ exports.promoteAd = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Ad not found or unauthorized' });
         }
 
+        // Snapshot previous promotion state (for archiving + "top-up" carry-over)
+        const prevAdType = ad.adType;
+        const prevPromoteType = ad.promoteType;
+        const prevPromoteTag = ad.promoteTag;
+        const prevPromoteBudget = ad.promoteBudget;
+        const prevPromoteDuration = ad.promoteDuration;
+        const prevPromoteStartDate = ad.promoteStartDate;
+        const prevPromoteEndDate = ad.promoteEndDate;
+        const prevTargetD = ad.targetD;
+        const prevTargetValue = ad.targetValue;
+        const prevPromotedViews = ad.promotedViews;
+        const prevPromotedDeliveryCount = ad.promotedDeliveryCount;
+
+        // Carry over remaining budget from an active promotion (so re-promote doesn't waste remaining value)
+        let carriedOverBudget = 0;
+        try {
+            const prevTypeLower = String(prevAdType || '').trim().toLowerCase();
+            const now = new Date();
+            const prevStartMs = prevPromoteStartDate ? new Date(prevPromoteStartDate).getTime() : NaN;
+            const prevDuration = Number(prevPromoteDuration) || 0;
+            const prevBudget = Number(prevPromoteBudget) || 0;
+            const isRunningPrev = (prevTypeLower === 'promoted' || prevTypeLower === 'processing') &&
+                prevPromoteEndDate &&
+                new Date(prevPromoteEndDate) > now;
+
+            if (isRunningPrev && prevDuration > 0 && prevBudget > 0 && Number.isFinite(prevStartMs)) {
+                const MS_PER_DAY = 24 * 60 * 60 * 1000;
+                const daysElapsed = Math.min(prevDuration, Math.max(1, Math.floor((now.getTime() - prevStartMs) / MS_PER_DAY) + 1));
+                const remainingDays = Math.max(0, prevDuration - daysElapsed);
+                carriedOverBudget = Math.round((prevBudget / prevDuration) * remainingDays);
+            }
+        } catch (_) {
+            carriedOverBudget = 0;
+        }
+
+        const newBudget = Number(promoteBudget) || 0;
+        const mergedBudget = Math.max(0, Math.round(newBudget + carriedOverBudget));
+
         // Update ad fields
         // Update ad fields based on user trust status
         const user = await User.findById(req.user.id);
@@ -1302,7 +1342,7 @@ exports.promoteAd = async (req, res) => {
         ad.targetLocations = targetLocations;
         ad.promoteDuration = promoteDuration;
         ad.promoteEndDate = promoteEndDate;
-        ad.promoteBudget = promoteBudget;
+        ad.promoteBudget = mergedBudget;
         ad.estimatedReach = estimatedReach;
 
         // Update showTill: promoteEndDate + setting inactive time
@@ -1312,24 +1352,49 @@ exports.promoteAd = async (req, res) => {
         newShowTill.setDate(newShowTill.getDate() + inactiveDays);
         ad.showTill = newShowTill;
 
-         // Archive previous promotion if it exists
-         if ((ad.adType || '').toLowerCase() === 'promoted') {
-             ad.promotionHistory = ad.promotionHistory || [];
-             ad.promotionHistory.push({
-                 startDate: ad.promoteStartDate || ad.createdAt,
-                 endDate: ad.promoteEndDate || new Date(),
-                 adType: ad.adType,
-                promoteType: ad.promoteType,
-                promoteTag: ad.promoteTag,
-                budget: ad.promoteBudget,
-                views: ad.promotedViews || 0,
-                deliveryCount: ad.promotedDeliveryCount || 0,
+        // Archive previous promotion if it exists
+        if (['promoted', 'processing'].includes(String(prevAdType || '').trim().toLowerCase())) {
+            ad.promotionHistory = ad.promotionHistory || [];
+            ad.promotionHistory.push({
+                startDate: prevPromoteStartDate || ad.createdAt,
+                endDate: prevPromoteEndDate || new Date(),
+                adType: prevAdType,
+                promoteType: prevPromoteType,
+                promoteTag: prevPromoteTag,
+                budget: prevPromoteBudget,
+                targetD: prevTargetD,
+                targetValue: prevTargetValue,
+                views: prevPromotedViews || 0,
+                deliveryCount: prevPromotedDeliveryCount || 0,
                 createdAt: new Date()
             });
         }
 
         // Set Start Date for the new promotion
         ad.promoteStartDate = new Date();
+
+        // Set target totals for this promotion (Target/D and Target Value)
+        let totalTargetValue = 0;
+        if (estimatedReach !== undefined && estimatedReach !== null) {
+            const reachStr = String(estimatedReach);
+            const match = reachStr.match(/(\d+)\s*-\s*(\d+)/);
+            if (match) {
+                totalTargetValue = parseInt(match[1], 10) || 0;
+            } else {
+                const asNum = parseInt(reachStr.replace(/[^\d]/g, ''), 10);
+                totalTargetValue = isNaN(asNum) ? 0 : asNum;
+            }
+        }
+        if (mergedBudget > 0) {
+            totalTargetValue = Math.max(totalTargetValue, mergedBudget);
+        }
+        if (totalTargetValue > 0 && promoteDuration) {
+            ad.targetValue = totalTargetValue;
+            ad.targetD = String(Math.max(0, Math.round(totalTargetValue / Number(promoteDuration || 1))));
+        } else {
+            ad.targetValue = 0;
+            ad.targetD = '0';
+        }
 
         // Reset performance metrics for the new promotion
         ad.promotedViews = 0;
@@ -1635,6 +1700,8 @@ exports.cleanupExpiredPromotions = async () => {
                     promoteType: ad.promoteType,
                     promoteTag: ad.promoteTag,
                     budget: ad.promoteBudget,
+                    targetD: ad.targetD,
+                    targetValue: ad.targetValue,
                     views: ad.promotedViews || 0,
                     deliveryCount: ad.promotedDeliveryCount || 0,
                     createdAt: new Date()
@@ -1652,8 +1719,8 @@ exports.cleanupExpiredPromotions = async () => {
                 ad.promoteStartDate = undefined;
                 ad.promoteEndDate = undefined;
                 ad.estimatedReach = undefined;
-                ad.promotedViews = 0;
-                ad.promotedDeliveryCount = 0;
+                ad.labels = [];
+
 
                 // Save the changes
                 await ad.save();

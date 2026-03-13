@@ -138,7 +138,7 @@ router.delete('/promotion-plans/:id', verifyToken, checkPermission('Promote Mana
 
 // POST manual product promote
 router.post('/manual-promote', verifyToken, checkPermission('Promote Management'), async (req, res) => {
-    const { productId, amount, runTill, sellerId, isVerifyBadge, level, promoteType, trafficLink } = req.body;
+    const { productId, amount, runTill, sellerId, isVerifyBadge, level, promoteType, trafficLink, labels } = req.body;
     try {
         let ad = null;
         if (productId) {
@@ -146,16 +146,65 @@ router.post('/manual-promote', verifyToken, checkPermission('Promote Management'
             if (!ad) return res.status(404).json({ message: 'Product not found' });
 
             const originalStatus = ad.status;
+            const previousAdType = ad.adType;
             const adOwner = ad.user ? await User.findById(ad.user) : null;
             const isTrusted = adOwner && String(adOwner.merchantTrustStatus || '').trim().toLowerCase() === 'trusted';
 
+            // Carry over remaining budget from a running promotion (top-up behavior)
+            let carriedOverBudget = 0;
+            try {
+                const prevTypeLower = String(previousAdType || '').trim().toLowerCase();
+                const now = new Date();
+                const prevStartMs = ad.promoteStartDate ? new Date(ad.promoteStartDate).getTime() : NaN;
+                const prevDuration = Number(ad.promoteDuration) || 0;
+                const prevBudget = Number(ad.promoteBudget) || 0;
+                const isRunningPrev = (prevTypeLower === 'promoted' || prevTypeLower === 'processing') &&
+                    ad.promoteEndDate &&
+                    new Date(ad.promoteEndDate) > now;
+
+                if (isRunningPrev && prevDuration > 0 && prevBudget > 0 && Number.isFinite(prevStartMs)) {
+                    const MS_PER_DAY = 24 * 60 * 60 * 1000;
+                    const daysElapsed = Math.min(prevDuration, Math.max(1, Math.floor((now.getTime() - prevStartMs) / MS_PER_DAY) + 1));
+                    const remainingDays = Math.max(0, prevDuration - daysElapsed);
+                    carriedOverBudget = Math.round((prevBudget / prevDuration) * remainingDays);
+                }
+            } catch (_) {
+                carriedOverBudget = 0;
+            }
+
+            // Archive previous promotion snapshot (so new promotion starts fresh)
+            const prevTypeLower = String(previousAdType || '').trim().toLowerCase();
+            if (prevTypeLower === 'promoted' || prevTypeLower === 'processing') {
+                ad.promotionHistory = ad.promotionHistory || [];
+                ad.promotionHistory.push({
+                    startDate: ad.promoteStartDate || ad.createdAt,
+                    endDate: ad.promoteEndDate || new Date(),
+                    adType: previousAdType,
+                    promoteType: ad.promoteType,
+                    promoteTag: ad.promoteTag,
+                    budget: ad.promoteBudget,
+                    targetD: ad.targetD,
+                    targetValue: ad.targetValue,
+                    views: ad.promotedViews || 0,
+                    deliveryCount: ad.promotedDeliveryCount || 0,
+                    createdAt: new Date()
+                });
+            }
+
             // Update Ad promotion details
-            ad.promoteBudget = Number(amount);
+            const budgetNum = Number(amount);
+            const newBudget = isNaN(budgetNum) ? 0 : budgetNum;
+            ad.promoteBudget = Math.max(0, Math.round(newBudget + carriedOverBudget));
 
             // Set Promote Type and Traffic Link
             if (promoteType) ad.promoteType = promoteType;
-            if (trafficLink) ad.trafficLink = trafficLink;
-            if (promoteType === 'traffic') ad.trafficButtonType = 'Visit';
+            if (promoteType === 'traffic') {
+                if (trafficLink) ad.trafficLink = trafficLink;
+                ad.trafficButtonType = 'Visit';
+            } else {
+                ad.trafficLink = undefined;
+                ad.trafficButtonType = undefined;
+            }
 
             if (runTill) {
                 const parsedRunTill = Number(runTill);
@@ -180,15 +229,26 @@ router.post('/manual-promote', verifyToken, checkPermission('Promote Management'
                 }
             }
 
-            // Handle Level/Label
-            if (level) {
-                // Check if level matches promoteTag enum
-                if (['Urgent', 'Discount', 'Offer', 'Highlights'].includes(level)) {
-                    ad.promoteTag = level;
+            let transactionItem = level || 'Manual Promotion';
+
+            // Handle Level/Label(s)
+            const incomingLabels = Array.isArray(labels)
+                ? labels
+                : (labels ? [labels] : (level ? [level] : []));
+            const cleanedLabels = (incomingLabels || [])
+                .map(l => (typeof l === 'string' ? l.trim() : String(l || '').trim()))
+                .filter(Boolean);
+
+            if (cleanedLabels.length > 0) {
+                ad.labels = Array.from(new Set(cleanedLabels));
+                transactionItem = cleanedLabels.join(', ');
+
+                const primaryLabel = cleanedLabels[0];
+                if (['Urgent', 'Discount', 'Offer', 'Highlights'].includes(primaryLabel)) {
+                    ad.promoteTag = primaryLabel;
                 } else {
-                    // Store in features if not a standard tag
                     if (!ad.features) ad.features = {};
-                    ad.features.promoteLabel = level;
+                    ad.features.promoteLabel = primaryLabel;
                 }
             }
 
@@ -200,6 +260,21 @@ router.post('/manual-promote', verifyToken, checkPermission('Promote Management'
                 ad.status = 'active';
                 ad.adType = 'Promoted';
             }
+
+            // Start new promotion window + reset counters
+            ad.promoteStartDate = new Date();
+            ad.promotedViews = 0;
+            ad.promotedDeliveryCount = 0;
+
+            // Target calculation (Target/D + total Target Value)
+            ad.targetD = '0';
+            ad.targetValue = 0;
+            if (ad.promoteDuration && ad.promoteDuration > 0 && ad.promoteBudget > 0) {
+                const dailyTarget = Math.max(0, Math.round(ad.promoteBudget / ad.promoteDuration));
+                ad.targetD = String(dailyTarget);
+                ad.targetValue = dailyTarget * ad.promoteDuration;
+            }
+
             await ad.save();
 
             // Automatically upgrade user to Premium only when ad is actually Promoted
@@ -218,7 +293,7 @@ router.post('/manual-promote', verifyToken, checkPermission('Promote Management'
                 amount: Number(amount) || 0,
                 payType: 'Admin',
                 payeeName: adOwner?.name || 'Admin',
-                item: level || 'Manual Promotion',
+                item: transactionItem,
                 status: 'VALID'
             });
             await transaction.save();

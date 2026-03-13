@@ -202,13 +202,19 @@ const adSchema = new mongoose.Schema({
         promoteType: String,
         promoteTag: String,
         budget: Number,
+        targetD: String,
+        targetValue: Number,
         views: Number,
         deliveryCount: Number,
         createdAt: {
             type: Date,
             default: Date.now
         }
-    }]
+    }],
+    labels: {
+        type: [String],
+        default: []
+    }
 }, { timestamps: true });
 
 adSchema.index({ status: 1, createdAt: -1 });
