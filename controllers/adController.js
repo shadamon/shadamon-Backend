@@ -1378,8 +1378,14 @@ exports.promoteAd = async (req, res) => {
                 totalTargetValue = isNaN(asNum) ? 0 : asNum;
             }
         }
-        if (mergedBudget > 0) {
-            totalTargetValue = Math.max(totalTargetValue, mergedBudget);
+
+        // Top-up support: add carried-over target using previous target/budget ratio (keep units consistent)
+        if (carriedOverBudget > 0) {
+            const prevBudget = Number(prevPromoteBudget) || 0;
+            const prevTarget = Number(prevTargetValue) || 0;
+            if (prevBudget > 0 && prevTarget > 0) {
+                totalTargetValue += Math.round((prevTarget / prevBudget) * carriedOverBudget);
+            }
         }
         if (totalTargetValue > 0 && promoteDuration) {
             ad.targetValue = totalTargetValue;

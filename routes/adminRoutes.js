@@ -140,8 +140,64 @@ router.delete('/promotion-plans/:id', verifyToken, checkPermission('Promote Mana
 router.post('/manual-promote', verifyToken, checkPermission('Promote Management'), async (req, res) => {
     const { productId, amount, runTill, sellerId, isVerifyBadge, level, promoteType, trafficLink, labels } = req.body;
     try {
+        const hasProductId = Boolean(productId && String(productId).trim());
+        const hasSellerId = Boolean(sellerId && String(sellerId).trim());
+
+        if (!hasProductId && !hasSellerId) {
+            return res.status(400).json({ message: 'Either Product ID or Seller ID is required' });
+        }
+
+        // Seller verification-only flow (no product promotion side effects)
+        if (!hasProductId && hasSellerId) {
+            if (isVerifyBadge !== 'Yes' && isVerifyBadge !== 'No') {
+                return res.status(400).json({ message: 'Verify Badge Yes/No is required' });
+            }
+
+            const user = await User.findById(sellerId);
+            if (!user) return res.status(404).json({ message: 'User not found' });
+
+            user.mVerified = isVerifyBadge === 'Yes';
+            await user.save();
+
+            // Record Transaction for Seller Verification
+            const transaction = new Transaction({
+                tnxId: `ADMIN-VERIFY-${Date.now()}`,
+                mode: 'Admin',
+                sellerId: user._id,
+                mobileNumber: user.mobile,
+                amount: Number(amount) || 0,
+                payType: 'Admin',
+                payeeName: user.name,
+                item: 'Verify Badge',
+                status: 'VALID'
+            });
+            await transaction.save();
+
+            return res.json({
+                success: true,
+                message: 'Seller verification updated',
+                data: null
+            });
+        }
+
         let ad = null;
-        if (productId) {
+        if (hasProductId) {
+            if (amount === undefined || amount === null || String(amount).trim() === '') {
+                return res.status(400).json({ message: 'Amount is required when Product ID is provided' });
+            }
+            if (!runTill || String(runTill).trim() === '') {
+                return res.status(400).json({ message: 'Run Till date is required when Product ID is provided' });
+            }
+
+            const budgetNumCheck = Number(amount);
+            if (!Number.isFinite(budgetNumCheck) || budgetNumCheck < 0) {
+                return res.status(400).json({ message: 'Amount must be a valid number' });
+            }
+
+            if (promoteType === 'traffic' && (!trafficLink || String(trafficLink).trim() === '')) {
+                return res.status(400).json({ message: 'Traffic link is required for Traffic promotion' });
+            }
+
             ad = await Ad.findById(productId);
             if (!ad) return res.status(404).json({ message: 'Product not found' });
 
@@ -266,13 +322,42 @@ router.post('/manual-promote', verifyToken, checkPermission('Promote Management'
             ad.promotedViews = 0;
             ad.promotedDeliveryCount = 0;
 
-            // Target calculation (Target/D + total Target Value)
+            // Target calculation (Target/D + total Target Value) in performance units (reach/traffic), not money.
             ad.targetD = '0';
             ad.targetValue = 0;
             if (ad.promoteDuration && ad.promoteDuration > 0 && ad.promoteBudget > 0) {
-                const dailyTarget = Math.max(0, Math.round(ad.promoteBudget / ad.promoteDuration));
-                ad.targetD = String(dailyTarget);
-                ad.targetValue = dailyTarget * ad.promoteDuration;
+                const dailyBudget = ad.promoteBudget / ad.promoteDuration;
+
+                let plan = null;
+                try {
+                    plan = await PromotionPlan.findOne({ categories: ad.category }).sort({ createdAt: -1 });
+                    if (!plan) {
+                        plan = await PromotionPlan.findOne().sort({ createdAt: -1 });
+                    }
+                } catch (_) {
+                    plan = null;
+                }
+
+                if (plan) {
+                    const planBaseAmount = Number(plan.amount) || 0;
+                    const basePerformance = promoteType === 'traffic'
+                        ? (Number(plan.traffic) || 0)
+                        : (Number(plan.reach) || 0);
+                    const ratio = planBaseAmount > 0 ? (dailyBudget / planBaseAmount) : 0;
+
+                    const dailyTarget = Math.max(0, Math.floor(basePerformance * ratio));
+                    const totalTarget = dailyTarget * ad.promoteDuration;
+
+                    ad.targetD = String(dailyTarget);
+                    ad.targetValue = totalTarget;
+
+                    // Keep estimatedReach consistent for dashboards (min-max for total period)
+                    const gapPercent = parseFloat(String(plan.gapAmount || '0')) || 0;
+                    const maxTotal = Math.max(totalTarget, Math.floor(totalTarget * (1 + gapPercent / 100)));
+                    if (totalTarget > 0) {
+                        ad.estimatedReach = `${totalTarget}-${maxTotal}`;
+                    }
+                }
             }
 
             await ad.save();
@@ -299,20 +384,13 @@ router.post('/manual-promote', verifyToken, checkPermission('Promote Management'
             await transaction.save();
         }
 
-        // Handle Seller Verification Badge
-        if (sellerId) {
+        // Optional seller verification alongside product promotion (no trusted/premium side effects)
+        if (hasSellerId && (isVerifyBadge === 'Yes' || isVerifyBadge === 'No')) {
             const user = await User.findById(sellerId);
             if (user) {
-                if (isVerifyBadge === 'Yes') {
-                    user.merchantTrustStatus = 'Trusted';
-                    user.mVerified = true;
-                } else if (isVerifyBadge === 'No') {
-                    user.merchantTrustStatus = 'Untrusted';
-                    user.mVerified = false;
-                }
+                user.mVerified = isVerifyBadge === 'Yes';
                 await user.save();
 
-                // Record Transaction for Seller Verification
                 const transaction = new Transaction({
                     tnxId: `ADMIN-VERIFY-${Date.now()}`,
                     mode: 'Admin',
@@ -325,10 +403,6 @@ router.post('/manual-promote', verifyToken, checkPermission('Promote Management'
                     status: 'VALID'
                 });
                 await transaction.save();
-            } else {
-                if (!productId) {
-                    return res.status(404).json({ message: 'User not found' });
-                }
             }
         }
 
