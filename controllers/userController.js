@@ -504,18 +504,33 @@ const googleLogin = async (req, res) => {
 // @access  Public
 const getPremiumUsers = async (req, res) => {
     try {
-        const users = await User.find({ merchantType: 'Premium' })
-            .select('name storeName photo photoStatus merchantType verifiedBy profileViews mVerified')
+        let premiumUsers = await User.find({ merchantType: 'Premium' })
+            .select('name storeName photo photoStatus merchantType verifiedBy profileViews mVerified followers')
             .lean();
 
-        // Filter users who might have photoStatus != 'approved' if strict
-        // But for now, just return all premium users as requested.
-        // Maybe ensure photo is visible or fallback handled on frontend.
+        if (premiumUsers.length < 10) {
+            const premiumIds = premiumUsers.map(u => u._id);
+            const verifiedUsers = await User.find({
+                mVerified: true,
+                _id: { $nin: premiumIds }
+            })
+                .select('name storeName photo photoStatus merchantType verifiedBy profileViews mVerified followers')
+                .limit(10 - premiumUsers.length)
+                .lean();
+
+            premiumUsers = [...premiumUsers, ...verifiedUsers];
+        }
+
+        const shuffled = premiumUsers.sort(() => Math.random() - 0.5);
+
+
+
+
 
         res.json({
             success: true,
-            count: users.length,
-            data: users
+            count: shuffled.length,
+            data: shuffled
         });
     } catch (err) {
         console.error('Error fetching premium users:', err);
