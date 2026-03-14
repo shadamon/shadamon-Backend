@@ -724,6 +724,10 @@ exports.getFeedAdsPublic = async (req, res) => {
     try {
         const { category, subCategory, location, subLocation, promoteTag, sort, search, page = 1 } = req.query;
 
+        const now = new Date();
+        const PROMOTED_PER_PAGE = 12;
+        const FREE_PER_PAGE = 20;
+
         let query = { status: 'active' };
 
         if (category) query.category = category;
@@ -737,7 +741,6 @@ exports.getFeedAdsPublic = async (req, res) => {
                 query.user = { $in: verifiedUserIds };
             } else {
                 query.promoteTag = promoteTag;
-                query.adType = 'Promoted';
             }
         }
 
@@ -764,21 +767,99 @@ exports.getFeedAdsPublic = async (req, res) => {
 
         const pageNum = parseInt(page);
 
-        // Fetch 12 Promoted Ads per page (to support 1 big + 5 small x 2 cycles)
-        const promotedAdsPromise = Ad.find({ ...query, adType: 'Promoted' })
-            .select('headline description features labels views price images location subLocation category subCategory createdAt deliveryCount user adType phone hidePhone additionalPhones promotedViews promotedDeliveryCount dailyViewsCount dailyDeliveryCount promoteStartDate promoteEndDate promoteType trafficLink trafficButtonType promoteTag')
-            .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType createdAt verifiedBy mVerified sellerPageUrl followers rating ratingCount')
-            .sort(sortQuery)
-            .skip((pageNum - 1) * 12)
-            .limit(12);
+        // NOTE: We build additional $and/$or clauses below; keep any existing search $or separate
+        // to avoid overwriting it when adding type/expiry filters.
+        const searchOr = Array.isArray(query.$or) ? query.$or : null;
+        if (searchOr) delete query.$or;
 
-        // Fetch 20 Free Ads per page
-        const freeAdsPromise = Ad.find({ ...query, adType: { $ne: 'Promoted' } })
-            .select('headline description features labels views price images location subLocation category subCategory createdAt deliveryCount user adType phone hidePhone additionalPhones promotedViews promotedDeliveryCount dailyViewsCount dailyDeliveryCount promoteStartDate promoteEndDate')
-            .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType createdAt verifiedBy mVerified sellerPageUrl followers rating ratingCount')
-            .sort(sortQuery)
-            .skip((pageNum - 1) * 20)
-            .limit(20);
+        // If a specific promoteTag is selected (except "Verified"), only show currently-active promoted ads.
+        // Otherwise: paginate in two phases — all active promoted first, then free/expired-promoted.
+        const onlyPromotedByTag = !!(promoteTag && promoteTag !== 'All' && promoteTag !== 'Verified');
+
+        const activePromotedQuery = {
+            ...query,
+            adType: 'Promoted',
+            $and: [
+                ...(searchOr ? [{ $or: searchOr }] : []),
+                {
+                    $or: [
+                        { promoteStartDate: { $exists: false } },
+                        { promoteStartDate: { $lte: now } }
+                    ]
+                },
+                {
+                    $or: [
+                        { promoteEndDate: { $exists: false } },
+                        { promoteEndDate: { $gte: now } }
+                    ]
+                }
+            ]
+        };
+
+        // Treat expired promoted as free in the feed (so they don't "disappear" until cleanup runs).
+        const freeOrExpiredPromotedQuery = {
+            ...query,
+            $and: [
+                ...(searchOr ? [{ $or: searchOr }] : []),
+                {
+                    $or: [
+                        { adType: { $ne: 'Promoted' } },
+                        { adType: 'Promoted', promoteEndDate: { $lt: now } }
+                    ]
+                }
+            ]
+        };
+
+        const selectFieldsPromoted =
+            'headline description features labels views price images location subLocation category subCategory createdAt deliveryCount user adType phone hidePhone additionalPhones promotedViews promotedDeliveryCount dailyViewsCount dailyDeliveryCount promoteStartDate promoteEndDate promoteType trafficLink trafficButtonType promoteTag';
+        const selectFieldsFree =
+            'headline description features labels views price images location subLocation category subCategory createdAt deliveryCount user adType phone hidePhone additionalPhones promotedViews promotedDeliveryCount dailyViewsCount dailyDeliveryCount promoteStartDate promoteEndDate';
+        const populateUserFields =
+            'name storeName photo photoStatus storeLogo storeBanner merchantType createdAt verifiedBy mVerified sellerPageUrl followers rating ratingCount';
+
+        let promotedAds = [];
+        let freeAds = [];
+        let hasMore = false;
+
+        if (onlyPromotedByTag) {
+            promotedAds = await Ad.find(activePromotedQuery)
+                .select(selectFieldsPromoted)
+                .populate('user', populateUserFields)
+                .sort(sortQuery)
+                .skip((pageNum - 1) * PROMOTED_PER_PAGE)
+                .limit(PROMOTED_PER_PAGE);
+
+            const promotedCount = await Ad.countDocuments(activePromotedQuery);
+            hasMore = pageNum * PROMOTED_PER_PAGE < promotedCount;
+        } else {
+            const [promotedCount, freeCount] = await Promise.all([
+                Ad.countDocuments(activePromotedQuery),
+                Ad.countDocuments(freeOrExpiredPromotedQuery)
+            ]);
+
+            const promotedPages = Math.ceil(promotedCount / PROMOTED_PER_PAGE);
+
+            if (promotedPages > 0 && pageNum <= promotedPages) {
+                promotedAds = await Ad.find(activePromotedQuery)
+                    .select(selectFieldsPromoted)
+                    .populate('user', populateUserFields)
+                    .sort(sortQuery)
+                    .skip((pageNum - 1) * PROMOTED_PER_PAGE)
+                    .limit(PROMOTED_PER_PAGE);
+
+                hasMore = pageNum < promotedPages || freeCount > 0;
+            } else {
+                const freePageIndex = Math.max(1, pageNum - promotedPages); // 1-based
+                freeAds = await Ad.find(freeOrExpiredPromotedQuery)
+                    .select(selectFieldsFree)
+                    .populate('user', populateUserFields)
+                    .sort(sortQuery)
+                    .skip((freePageIndex - 1) * FREE_PER_PAGE)
+                    .limit(FREE_PER_PAGE);
+
+                hasMore = freePageIndex * FREE_PER_PAGE < freeCount;
+            }
+        }
 
         // Fetch 1 Categories per page for interleaving (1 category row per cycle/page)
         const categoriesPromise = Category.find({ postCount: { $gt: 0 } })
@@ -787,11 +868,7 @@ exports.getFeedAdsPublic = async (req, res) => {
             .skip((pageNum - 1) * 1)
             .limit(1);
 
-        const [promotedAds, freeAds, interleavedCategories] = await Promise.all([
-            promotedAdsPromise,
-            freeAdsPromise,
-            categoriesPromise
-        ]);
+        const [interleavedCategories] = await Promise.all([categoriesPromise]);
 
         if (pageNum === 1) {
             exports.cleanupExpiredPromotions().catch(err => console.error("Feed Cleanup Error:", err));
@@ -801,6 +878,11 @@ exports.getFeedAdsPublic = async (req, res) => {
 
         const optimizedAds = allAds.map(ad => {
             const adObj = ad.toObject();
+            // If an item is a "Promoted" ad but the promotion already ended, treat it as a Free post
+            // in the feed response. (DB cleanup runs asynchronously and might not have updated it yet.)
+            if (adObj.adType === 'Promoted' && adObj.promoteEndDate && new Date(adObj.promoteEndDate) < now) {
+                adObj.adType = 'Free';
+            }
             if (adObj.images && adObj.images.length > 0) {
                 adObj.images = [adObj.images[0]];
             }
@@ -810,6 +892,9 @@ exports.getFeedAdsPublic = async (req, res) => {
         // Impression counting
         if (allAds.length > 0) {
             const adIds = allAds.map(ad => ad._id);
+            const promotedActiveIds = allAds
+                .filter(ad => ad.adType === 'Promoted' && (!ad.promoteEndDate || ad.promoteEndDate >= now))
+                .map(ad => ad._id);
             const today = new Date();
             today.setHours(0, 0, 0, 0);
 
@@ -823,15 +908,17 @@ exports.getFeedAdsPublic = async (req, res) => {
                 { $inc: { deliveryCount: 1, dailyDeliveryCount: 1 }, $set: { lastDeliveryDate: new Date() } }
             ).catch(err => console.error("Error updating delivery counts:", err));
 
-            await Ad.updateMany(
-                { _id: { $in: adIds }, adType: 'Promoted' },
-                { $inc: { promotedDeliveryCount: 1 } }
-            ).catch(err => console.error("Error updating promoted delivery counts:", err));
+            if (promotedActiveIds.length > 0) {
+                await Ad.updateMany(
+                    { _id: { $in: promotedActiveIds } },
+                    { $inc: { promotedDeliveryCount: 1 } }
+                ).catch(err => console.error("Error updating promoted delivery counts:", err));
+            }
         }
 
         res.json({
             success: true,
-            hasMore: freeAds.length === 20 || promotedAds.length === 12,
+            hasMore,
             data: optimizedAds,
             feedCategories: interleavedCategories
         });
