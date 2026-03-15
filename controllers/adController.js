@@ -822,12 +822,34 @@ exports.getFeedAdsPublic = async (req, res) => {
         let hasMore = false;
 
         if (onlyPromotedByTag) {
-            promotedAds = await Ad.find(activePromotedQuery)
+            // Priority Ranking: Rank by (TargetD - dailyViewsCount) to focus on ads needing reach
+            const promotedItems = await Ad.aggregate([
+                { $match: activePromotedQuery },
+                {
+                    $addFields: {
+                        targetDNum: { $convert: { input: "$targetD", to: "double", onError: 0, onNull: 0 } }
+                    }
+                },
+                {
+                    $addFields: {
+                        reachGap: { $subtract: ["$targetDNum", "$dailyViewsCount"] }
+                    }
+                },
+                { $sort: { reachGap: -1, createdAt: -1 } },
+                { $skip: (pageNum - 1) * PROMOTED_PER_PAGE },
+                { $limit: PROMOTED_PER_PAGE },
+                { $project: { _id: 1 } }
+            ]);
+
+            const promotedIds = promotedItems.map(item => item._id);
+            promotedAds = await Ad.find({ _id: { $in: promotedIds } })
                 .select(selectFieldsPromoted)
-                .populate('user', populateUserFields)
-                .sort(sortQuery)
-                .skip((pageNum - 1) * PROMOTED_PER_PAGE)
-                .limit(PROMOTED_PER_PAGE);
+                .populate('user', populateUserFields);
+
+            // Re-sort to maintain the aggregation order
+            promotedAds.sort((a, b) => {
+                return promotedIds.findIndex(id => id.equals(a._id)) - promotedIds.findIndex(id => id.equals(b._id));
+            });
 
             const promotedCount = await Ad.countDocuments(activePromotedQuery);
             hasMore = pageNum * PROMOTED_PER_PAGE < promotedCount;
@@ -840,12 +862,34 @@ exports.getFeedAdsPublic = async (req, res) => {
             const promotedPages = Math.ceil(promotedCount / PROMOTED_PER_PAGE);
 
             if (promotedPages > 0 && pageNum <= promotedPages) {
-                promotedAds = await Ad.find(activePromotedQuery)
+                // Priority Ranking: Rank by (TargetD - dailyViewsCount) to focus on ads needing reach
+                const promotedItems = await Ad.aggregate([
+                    { $match: activePromotedQuery },
+                    {
+                        $addFields: {
+                            targetDNum: { $convert: { input: "$targetD", to: "double", onError: 0, onNull: 0 } }
+                        }
+                    },
+                    {
+                        $addFields: {
+                            reachGap: { $subtract: ["$targetDNum", "$dailyViewsCount"] }
+                        }
+                    },
+                    { $sort: { reachGap: -1, createdAt: -1 } },
+                    { $skip: (pageNum - 1) * PROMOTED_PER_PAGE },
+                    { $limit: PROMOTED_PER_PAGE },
+                    { $project: { _id: 1 } }
+                ]);
+
+                const promotedIds = promotedItems.map(item => item._id);
+                promotedAds = await Ad.find({ _id: { $in: promotedIds } })
                     .select(selectFieldsPromoted)
-                    .populate('user', populateUserFields)
-                    .sort(sortQuery)
-                    .skip((pageNum - 1) * PROMOTED_PER_PAGE)
-                    .limit(PROMOTED_PER_PAGE);
+                    .populate('user', populateUserFields);
+
+                // Re-sort to maintain the aggregation order
+                promotedAds.sort((a, b) => {
+                    return promotedIds.findIndex(id => id.equals(a._id)) - promotedIds.findIndex(id => id.equals(b._id));
+                });
 
                 hasMore = pageNum < promotedPages || freeCount > 0;
             } else {
