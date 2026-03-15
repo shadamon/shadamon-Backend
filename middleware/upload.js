@@ -25,16 +25,15 @@ const upload = multer({
     storage: storage,
     fileFilter: fileFilter,
     limits: {
-        fileSize: 10 * 1024 * 1024, // 10MB limit
-        files: 5 // Max 5 files
+        fileSize: 10 * 1024 * 1024, // 10MB limit (to allow for uncompressed uploads)
+        files: 10 // Increased to match frontend limit
     }
 });
 
 /**
  * Middleware to process uploaded images:
- * - Converts to WebP
- * - Saves to disk with .webp extension
- * - Updates req.file/req.files
+ * - Efficiently resizes and converts to WebP in a single pass
+ * - Writes directly to disk to minimize RAM usage
  */
 const processImages = async (req, res, next) => {
     if (!req.file && !req.files) return next();
@@ -45,57 +44,29 @@ const processImages = async (req, res, next) => {
             const filename = (file.fieldname || 'file') + '-' + uniqueSuffix + '.webp';
             const filepath = path.join(uploadDir, filename);
 
-            let quality = 80;
-            let outputBuffer;
-            let metadata = await sharp(file.buffer).metadata();
+            // Single-pass processing: Resize if larger than 1200px and convert to WebP
+            // We use .toFile() which is more memory-efficient than .toBuffer()
+            await sharp(file.buffer)
+                .resize({
+                    width: 1200,
+                    height: 1200,
+                    fit: 'inside',
+                    withoutEnlargement: true
+                })
+                .webp({ quality: 80 })
+                .toFile(filepath);
 
-            // Initial conversion to WebP
-            outputBuffer = await sharp(file.buffer)
-                .webp({ quality })
-                .toBuffer();
+            // Get the final file stats to update the file object
+            const stats = await fs.promises.stat(filepath);
 
-            // Loop to reduce quality if size is > 100KB
-            while (outputBuffer.length > 100 * 1024 && quality > 15) {
-                quality -= 5;
-                outputBuffer = await sharp(file.buffer)
-                    .webp({ quality })
-                    .toBuffer();
-            }
-
-            // If still > 100KB, resize the image
-            if (outputBuffer.length > 100 * 1024) {
-                outputBuffer = await sharp(file.buffer)
-                    .resize({ width: 1000, withoutEnlargement: true })
-                    .webp({ quality: 60 })
-                    .toBuffer();
-            }
-
-            // Final checks with more aggressive reduction if still too large
-            if (outputBuffer.length > 100 * 1024) {
-                outputBuffer = await sharp(file.buffer)
-                    .resize({ width: 800, withoutEnlargement: true })
-                    .webp({ quality: 40 })
-                    .toBuffer();
-            }
-
-            // Deep compression for very large files
-            if (outputBuffer.length > 100 * 1024) {
-                outputBuffer = await sharp(file.buffer)
-                    .resize({ width: 600, withoutEnlargement: true })
-                    .webp({ quality: 20 })
-                    .toBuffer();
-            }
-
-            await fs.promises.writeFile(filepath, outputBuffer);
-
-            // Update file object properties for next middleware
+            // Update file object properties for the controller
             file.filename = filename;
-            file.path = `uploads/${filename}`; // Standardized path
+            file.path = `uploads/${filename}`;
             file.destination = uploadDir;
             file.mimetype = 'image/webp';
-            file.size = outputBuffer.length;
+            file.size = stats.size;
 
-            // Remove buffer to free memory
+            // Free the memory buffer immediately
             delete file.buffer;
         } catch (error) {
             console.error(`Error processing image ${file.originalname}:`, error);
@@ -111,21 +82,8 @@ const processImages = async (req, res, next) => {
         }
 
         if (req.files) {
-            if (Array.isArray(req.files)) {
-                req.files.forEach(file => promises.push(processFile(file)));
-            } else {
-                // Handle cases like upload.fields() or upload.any()
-                const filesMap = req.files;
-                for (const key in filesMap) {
-                    const filesArray = filesMap[key];
-                    if (Array.isArray(filesArray)) {
-                        filesArray.forEach(file => promises.push(processFile(file)));
-                    } else {
-                        // In case any() is used and it's not an object of arrays
-                        promises.push(processFile(filesMap[key]));
-                    }
-                }
-            }
+            const filesArray = Array.isArray(req.files) ? req.files : Object.values(req.files).flat();
+            filesArray.forEach(file => promises.push(processFile(file)));
         }
 
         await Promise.all(promises);
