@@ -725,7 +725,7 @@ exports.getFeedAdsPublic = async (req, res) => {
         const { category, subCategory, location, subLocation, promoteTag, sort, search, page = 1 } = req.query;
 
         const now = new Date();
-        const PROMOTED_PER_PAGE = 12;
+        const PROMOTED_PER_PAGE = 24;
         const FREE_PER_PAGE = 20;
 
         let query = { status: 'active' };
@@ -1453,33 +1453,42 @@ exports.promoteAd = async (req, res) => {
         // Set Start Date for the new promotion
         ad.promoteStartDate = new Date();
 
-        // Set target totals for this promotion (Target/D and Target Value)
-        let totalTargetValue = 0;
-        if (estimatedReach !== undefined && estimatedReach !== null) {
-            const reachStr = String(estimatedReach);
-            const match = reachStr.match(/(\d+)\s*-\s*(\d+)/);
-            if (match) {
-                totalTargetValue = parseInt(match[1], 10) || 0;
-            } else {
-                const asNum = parseInt(reachStr.replace(/[^\d]/g, ''), 10);
-                totalTargetValue = isNaN(asNum) ? 0 : asNum;
-            }
-        }
+        // Target calculation (Target/D + total Target Value) in performance units (reach/traffic), not money.
+        ad.targetD = '0';
+        ad.targetValue = 0;
+        if (ad.promoteDuration && ad.promoteDuration > 0 && ad.promoteBudget > 0) {
+            const dailyBudget = ad.promoteBudget / ad.promoteDuration;
 
-        // Top-up support: add carried-over target using previous target/budget ratio (keep units consistent)
-        if (carriedOverBudget > 0) {
-            const prevBudget = Number(prevPromoteBudget) || 0;
-            const prevTarget = Number(prevTargetValue) || 0;
-            if (prevBudget > 0 && prevTarget > 0) {
-                totalTargetValue += Math.round((prevTarget / prevBudget) * carriedOverBudget);
+            let plan = null;
+            try {
+                plan = await PromotionPlan.findOne({ categories: ad.category }).sort({ createdAt: -1 });
+                if (!plan) {
+                    plan = await PromotionPlan.findOne().sort({ createdAt: -1 });
+                }
+            } catch (_) {
+                plan = null;
             }
-        }
-        if (totalTargetValue > 0 && promoteDuration) {
-            ad.targetValue = totalTargetValue;
-            ad.targetD = String(Math.max(0, Math.round(totalTargetValue / Number(promoteDuration || 1))));
-        } else {
-            ad.targetValue = 0;
-            ad.targetD = '0';
+
+            if (plan) {
+                const planBaseAmount = Number(plan.amount) || 0;
+                const basePerformance = ad.promoteType === 'traffic'
+                    ? (Number(plan.traffic) || 0)
+                    : (Number(plan.reach) || 0);
+                const ratio = planBaseAmount > 0 ? (dailyBudget / planBaseAmount) : 0;
+
+                const dailyTarget = Math.max(0, Math.floor(basePerformance * ratio));
+                const totalTarget = dailyTarget * ad.promoteDuration;
+
+                ad.targetD = String(dailyTarget);
+                ad.targetValue = totalTarget;
+
+                // Update estimatedReach to match the actual calculated performance
+                const gapPercent = parseFloat(String(plan.gapAmount || '0')) || 0;
+                const maxTotal = Math.max(totalTarget, Math.floor(totalTarget * (1 + gapPercent / 100)));
+                if (totalTarget > 0) {
+                    ad.estimatedReach = `${totalTarget}-${maxTotal}`;
+                }
+            }
         }
 
         // Reset performance metrics for the new promotion
