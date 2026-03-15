@@ -264,7 +264,7 @@ exports.getAllAdsAdmin = async (req, res) => {
         if (adType) query.adType = adType;
         if (_id && mongoose.Types.ObjectId.isValid(_id)) query._id = _id;
         if (status) query.status = status;
-        if (userUpdated !== undefined) query.userUpdated = userUpdated === 'true';
+        if (userUpdated) query.userUpdated = userUpdated === 'true';
         if (category) query.category = category;
         if (subCategory) query.subCategory = subCategory;
         if (subLocation) query.subLocation = subLocation;
