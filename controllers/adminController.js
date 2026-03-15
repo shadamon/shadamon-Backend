@@ -326,7 +326,7 @@ const deleteUser = async (req, res) => {
 
 const searchUsersByMobile = async (req, res) => {
     try {
-        const { mobile } = req.query;
+        const mobile = req.query.mobile || req.query.query;
         // Search for users by mobile, but only return unique mobiles to avoid frontend key issues
         // or just return everything but ensure frontend uses _id
         const users = await User.find({ mobile: new RegExp(mobile, 'i') }).select('_id mobile name');

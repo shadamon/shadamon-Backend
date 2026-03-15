@@ -89,4 +89,41 @@ const downloadAndSaveImage = async (url) => {
     }
 };
 
-module.exports = { fileToBase64, processImageString, downloadAndSaveImage };
+/**
+ * Saves a base64 image to the uploads/ad-positions folder as WebP.
+ * @param {string} base64String - The base64 data.
+ * @param {string} prefix - Prefix for the filename.
+ * @returns {Promise<string|null>} - The path to the saved image.
+ */
+const saveAdPositionImage = async (base64String, prefix = 'ad-pos') => {
+    if (!base64String || typeof base64String !== 'string' || !base64String.startsWith('data:')) {
+        return base64String; // Return as is if already a path or empty
+    }
+
+    try {
+        const base64Data = base64String.replace(/^data:image\/\w+;base64,/, "");
+        const buffer = Buffer.from(base64Data, 'base64');
+        
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        const fileName = `${prefix}-${uniqueSuffix}.webp`;
+        const subDir = 'ad-positions';
+        const uploadDir = path.join(__dirname, '..', 'uploads', subDir);
+
+        if (!fs.existsSync(uploadDir)) {
+            fs.mkdirSync(uploadDir, { recursive: true });
+        }
+
+        const filePath = path.join(uploadDir, fileName);
+
+        await sharp(buffer)
+            .webp({ quality: 80 })
+            .toFile(filePath);
+
+        return `uploads/${subDir}/${fileName}`;
+    } catch (err) {
+        console.error('Error saving ad position image:', err.message);
+        return null;
+    }
+};
+
+module.exports = { fileToBase64, processImageString, downloadAndSaveImage, saveAdPositionImage };

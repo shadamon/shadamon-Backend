@@ -19,6 +19,10 @@ const {
     deleteTransaction,
     getCurrentAdmin
 } = require('../controllers/adminController');
+const {
+    getAdPositions,
+    updateAdPosition
+} = require('../controllers/adPositionController');
 const PromotionPlan = require('../models/PromotionPlan');
 const Ad = require('../models/Ad');
 const User = require('../models/User');
@@ -85,6 +89,16 @@ router.post('/notifications/send', verifyToken, checkPermission('Notification & 
 
 // @route   POST /api/admins/notifications/count
 router.post('/notifications/count', verifyToken, checkPermission('Notification & Messaging'), getNotificationTargetCount);
+
+// --- Ad Position Routes ---
+// @route   GET /api/admins/ad-positions
+router.get('/ad-positions', verifyToken, checkPermission('AD Position (W/A/Q)'), getAdPositions);
+
+// @route   PUT /api/admins/ad-positions/:id
+router.put('/ad-positions/:id', verifyToken, checkPermission('AD Position (W/A/Q)'), upload.fields([
+    { name: 'imageDesk', maxCount: 1 },
+    { name: 'imageMob', maxCount: 1 }
+]), updateAdPosition);
 
 // --- Transaction Routes ---
 // @route   GET /api/admins/transactions

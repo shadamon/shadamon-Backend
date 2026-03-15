@@ -3,6 +3,7 @@ const router = express.Router();
 const adController = require('../controllers/adController');
 const { authenticateUser, verifyToken, optionalAuthenticateUser, checkPermission } = require('../middleware/auth');
 const upload = require('../middleware/upload');
+const { getAdPositionsPublic, getAdPositions, updateAdPosition } = require('../controllers/adPositionController');
 
 // @route   POST api/ads
 // @desc    Create a new ad
@@ -62,6 +63,11 @@ router.get('/public/count', adController.getAdsCount);
 // @access  Public
 router.get('/public/promotion-plans', adController.getAllPromotionPlansPublic);
 
+// @route   GET api/ads/public/ad-positions
+// @desc    Get all active ad positions
+// @access  Public
+router.get('/public/ad-positions', getAdPositionsPublic);
+
 // @route   GET api/ads/public/:id
 // @desc    Get single public ad
 // @access  Public
@@ -106,5 +112,22 @@ router.post('/admin/create', verifyToken, checkPermission('Post'), upload.array(
 // @desc    Delete ad by admin
 // @access  Private (Admin)
 router.delete('/admin/:id', verifyToken, checkPermission('Post'), adController.deleteAdAdmin);
+
+// Ad Position Management
+// @route   GET api/ads/admin/ad-positions
+// @desc    Get all ad positions
+// @access  Private (Admin)
+router.get('/admin/ad-positions', verifyToken, checkPermission('Post'), getAdPositions);
+
+// @route   PUT api/ads/admin/ad-positions/:id
+// @desc    Update ad position
+// @access  Private (Admin)
+router.put(
+    '/admin/ad-positions/:id', 
+    verifyToken, 
+    checkPermission('Post'), 
+    upload.fields([{ name: 'imageDesk', maxCount: 1 }, { name: 'imageMob', maxCount: 1 }]),
+    updateAdPosition
+);
 
 module.exports = router;
