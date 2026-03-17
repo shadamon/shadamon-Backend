@@ -18,15 +18,15 @@ exports.sendOTP = async (email, otp) => {
         await transporter.sendMail({
             from: `"Shadamon Security" <${process.env.EMAIL_USER}>`,
             to: email,
-            subject: 'Your Ad Posting Verification Code',
+            subject: 'Your SHADAMON.com verification code',
             html: `
                 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
                     <h2 style="color: #4F46E5;">Verify Your Identity</h2>
-                    <p>You are attempting to post an ad on Shadamon. Please use the verification code below to confirm your identity.</p>
+                    <p>Please use the verification code below to confirm your identity.</p>
                     <div style="background-color: #F3F4F6; padding: 20px; text-align: center; border-radius: 10px; margin: 20px 0;">
                         <h1 style="color: #111827; letter-spacing: 5px; margin: 0;">${otp}</h1>
                     </div>
-                    <p style="color: #6B7280; font-size: 14px;">This code is valid for 5 minutes. If you did not request this code, please ignore this email.</p>
+                    <p style="color: #6B7280; font-size: 14px;">Don't share with others. Helpline: 01752842084</p>
                 </div>
             `
         });

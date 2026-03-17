@@ -10,7 +10,7 @@ const sendSMSOTP = async (phone, otp) => {
     try {
         const apikey = process.env.SMS_API_KEY;
         const sender = process.env.SMS_SENDER_ID;
-        const msg = `${otp} is your OTP to Verify to SHADAMON Profile. Validity for 5 minutes. Never share your OTP with Others. Helpline 01752842084`;
+        const msg = `${otp} is your SHADAMON.com verification code. Don't share with others. Helpline: 01752842084`;
 
         // Ensure phone starts with 88 or similar if required by API, 
         // but API example shows 017...
