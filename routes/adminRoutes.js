@@ -17,8 +17,10 @@ const {
     getNotificationTargetCount,
     getTransactions,
     deleteTransaction,
-    getCurrentAdmin
+    getCurrentAdmin,
+    getDashboardStats
 } = require('../controllers/adminController');
+
 const {
     getAdPositions,
     updateAdPosition
@@ -37,6 +39,9 @@ router.post('/login', loginAdmin);
 
 // @route   GET /api/admins/me
 router.get('/me', verifyToken, getCurrentAdmin);
+// @route   GET /api/admins/dashboard/stats
+router.get('/dashboard/stats', verifyToken, getDashboardStats);
+
 
 // @route   GET /api/admins
 // @desc    Get all admins

@@ -4,6 +4,8 @@ const User = require('../models/User');
 const Notification = require('../models/Notification');
 const Ad = require('../models/Ad');
 const Transaction = require('../models/Transaction');
+const Report = require('../models/Report');
+
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const emailService = require('../utils/emailService');
@@ -580,6 +582,48 @@ const deleteTransaction = async (req, res) => {
     }
 };
 
+const getDashboardStats = async (req, res) => {
+    try {
+        const now = new Date();
+        const startOfToday = new Date();
+        startOfToday.setHours(0, 0, 0, 0);
+
+        const [
+            runningPromoted,
+            todayPromoted,
+            totalPost,
+            approvalWaiting,
+            totalReport,
+            totalUser
+        ] = await Promise.all([
+            Ad.countDocuments({
+                adType: 'Promoted',
+                status: 'active',
+                promoteEndDate: { $gte: now }
+            }),
+            Ad.countDocuments({
+                promoteStartDate: { $gte: startOfToday }
+            }),
+            Ad.countDocuments(),
+            Ad.countDocuments({ status: 'pending' }),
+            Report.countDocuments({ status: 'Pending' }),
+            User.countDocuments()
+        ]);
+
+        res.json({
+            runningPromoted,
+            todayPromoted,
+            totalPost,
+            approvalWaiting,
+            totalReport,
+            totalUser
+        });
+    } catch (err) {
+        console.error('Error fetching dashboard stats:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
 module.exports = {
     loginAdmin,
     getAllAdmins,
@@ -597,5 +641,6 @@ module.exports = {
     checkUsername,
     getTransactions,
     deleteTransaction,
-    getCurrentAdmin
+    getCurrentAdmin,
+    getDashboardStats
 };
