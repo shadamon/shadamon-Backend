@@ -628,7 +628,9 @@ const getUserActivity = async (req, res) => {
                     .skip(paymentsSkip)
                     .limit(safePaymentsLimit)
                     .select('tnxId mode sellerId productId mobileNumber amount payType payeeName item status payTime createdAt')
-                    .populate('productId', 'promoteDuration')
+                    // Include promoteEndDate and promotionHistory so the client can display when promotions ended,
+                    // even after cleanup clears the active promotion fields.
+                    .populate('productId', 'promoteDuration promoteStartDate promoteEndDate promotionHistory')
                     .lean()
                 : Promise.resolve([])
         ]);
