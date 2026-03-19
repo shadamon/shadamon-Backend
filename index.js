@@ -3,7 +3,7 @@ const express = require('express');
 const connectDB = require('./config/database');
 const cors = require('cors');
 
-// Import routes
+// Import routes //test push
 const userRoutes = require('./routes/userRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const adRoutes = require('./routes/adRoutes');
