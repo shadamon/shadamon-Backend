@@ -806,6 +806,13 @@ exports.getFeedAdsPublic = async (req, res) => {
                         { adType: { $ne: 'Promoted' } },
                         { adType: 'Promoted', promoteEndDate: { $lt: now } }
                     ]
+                },
+                {
+                    $or: [
+                        { adType: 'Promoted', promoteEndDate: { $gte: now } },
+                        { adType: 'Processing' },
+                        { showTill: { $gte: now } }
+                    ]
                 }
             ]
         };
@@ -978,8 +985,16 @@ exports.getFeedAdsPublic = async (req, res) => {
 exports.getAllAdsPublic = async (req, res) => {
     try {
         const { category, subCategory, location, subLocation, promoteTag, sort, search, limit } = req.query;
+        const now = new Date();
 
-        let query = { status: 'active' };
+        let query = { 
+            status: 'active',
+            $or: [
+                { adType: 'Promoted', promoteEndDate: { $gte: now } },
+                { adType: 'Processing' },
+                { showTill: { $gte: now } }
+            ]
+        };
 
         if (category) query.category = category;
         if (subCategory) query.subCategory = subCategory;
@@ -1090,8 +1105,16 @@ exports.getAllAdsPublic = async (req, res) => {
 exports.getAdsCount = async (req, res) => {
     try {
         const { category, subCategory, location, subLocation, promoteTag } = req.query;
+        const now = new Date();
 
-        let query = { status: 'active' };
+        let query = { 
+            status: 'active',
+            $or: [
+                { adType: 'Promoted', promoteEndDate: { $gte: now } },
+                { adType: 'Processing' },
+                { showTill: { $gte: now } }
+            ]
+        };
 
         if (category) query.category = category;
         if (subCategory) query.subCategory = subCategory;
@@ -1811,6 +1834,34 @@ exports.toggleAdStatusMyAd = async (req, res) => {
     } catch (err) {
         console.error("Error toggling ad status:", err.message);
         res.status(500).json({ success: false, message: 'Server Error' });
+    }
+};
+
+/**
+ * Automatically cleanup expired ads based on showTill date
+ * Moves ads to 'inactive' status if showTill < now, excluding currently promoted ads.
+ */
+exports.cleanupExpiredAds = async () => {
+    try {
+        const now = new Date();
+        // We only expire ads that are 'active' or 'review' or 'pause' 
+        // and NOT 'Promoted' or currently 'Processing' for promotion.
+        const result = await Ad.updateMany(
+            {
+                status: { $in: ['active', 'review', 'pause'] },
+                adType: { $nin: ['Promoted', 'Processing'] },
+                showTill: { $lt: now }
+            },
+            { $set: { status: 'inactive' } }
+        );
+
+        if (result.modifiedCount > 0) {
+            console.log(`[Ad Cleanup] Expired ${result.modifiedCount} ads to 'inactive' status.`);
+        }
+        return result.modifiedCount;
+    } catch (err) {
+        console.error("[Ad Cleanup] Error during ad expiration cleanup:", err);
+        throw err;
     }
 };
 
