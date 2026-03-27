@@ -144,9 +144,17 @@ const startServer = async () => {
 
 // Automated Background Tasks
 const adController = require('./controllers/adController');
+const userController = require('./controllers/userController');
+
 setInterval(() => {
-    console.log('🕒 Running scheduled promotion cleanup...');
-    adController.cleanupExpiredPromotions().catch(err => console.error("Auto Cleanup Failed", err));
+    console.log('🕒 Running scheduled ad/promotion cleanup...');
+    adController.cleanupExpiredPromotions().catch(err => console.error("Promotion Cleanup Failed", err));
+    adController.cleanupExpiredAds().catch(err => console.error("Ad Expiration Cleanup Failed", err));
+}, 1000 * 60 * 60); // Run every 1 hour
+
+setInterval(() => {
+    console.log('🕒 Running scheduled user verification cleanup...');
+    userController.cleanupExpiredVerifications().catch(err => console.error("User Cleanup Failed", err));
 }, 1000 * 60 * 60); // Run every 1 hour
 
 startServer();

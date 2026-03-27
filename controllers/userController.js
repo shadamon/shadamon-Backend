@@ -5,6 +5,7 @@ const Transaction = require('../models/Transaction');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { fileToBase64, downloadAndSaveImage } = require('../utils/imageHelper');
+const PremierOpportunity = require('../models/PremierOpportunity');
 
 // @desc    Register a new user
 // @route   POST /api/user/register
@@ -1108,6 +1109,39 @@ const requestDelete = async (req, res) => {
     }
 };
 
+/**
+ * Automatically cleanup expired user verifications
+ */
+const cleanupExpiredVerifications = async () => {
+    try {
+        const settings = await PremierOpportunity.findOne();
+        const durationInDays = settings ? (settings.verifyBadgeDuration || 365) : 365;
+
+        const cutoffDate = new Date();
+        cutoffDate.setDate(cutoffDate.getDate() - durationInDays);
+
+        // Find users whose verifiedAt is older than (Duration) days
+        const result = await User.updateMany(
+            {
+                mVerified: true,
+                verifiedAt: { $lt: cutoffDate }
+            },
+            {
+                $set: {
+                    mVerified: false,
+                    merchantTrustStatus: 'Untrusted'
+                }
+            }
+        );
+
+        if (result.modifiedCount > 0) {
+            console.log(`[User Cleanup] Expired verification for ${result.modifiedCount} users.`);
+        }
+    } catch (err) {
+        console.error("[User Cleanup] Error during verification cleanup:", err);
+    }
+};
+
 module.exports = {
     registerUser,
     loginUser,
@@ -1132,5 +1166,6 @@ module.exports = {
     toggleFavoriteAd,
     toggleNotifyPreference,
     changePassword,
-    requestDelete
+    requestDelete,
+    cleanupExpiredVerifications
 };
