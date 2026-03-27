@@ -48,7 +48,7 @@ const registerUser = async (req, res) => {
             dob: dob || undefined,
             gender: gender || undefined,
             mobile: mobile || undefined,
-            storeName: storeName || undefined,
+            storeName: normalizedName,
             actionType: actionType || 'call'
         });
 
@@ -358,6 +358,7 @@ const facebookLogin = async (req, res) => {
                 verifiedBy: 'Facebook',
                 accountStatus: 'review',
                 merchantType: 'Free',
+                storeName: name,
                 photo: localPath || undefined,
                 photoStatus: localPath ? 'approved' : undefined
             });
@@ -467,6 +468,7 @@ const googleLogin = async (req, res) => {
                 verifiedBy: 'Google',
                 accountStatus: 'review',
                 merchantType: 'Free',
+                storeName: name,
                 photo: localPath || undefined,
                 photoStatus: localPath ? 'approved' : undefined
             });
