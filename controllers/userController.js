@@ -100,7 +100,18 @@ const loginUser = async (req, res) => {
 
         // Find user by email OR mobile
         let user;
-        if (email) {
+        if (email && req.body.mobile) {
+            // If both provided, search for user that has BOTH
+            user = await User.findOne({
+                $and: [
+                    { $or: [{ email }, { mobile: email }] },
+                    { mobile: req.body.mobile }
+                ]
+            });
+            if (!user) {
+                return res.status(400).json({ message: 'Mobile and Email do not match. Please ensure both are correct for your account.' });
+            }
+        } else if (email) {
             user = await User.findOne({
                 $or: [
                     { email: email },
@@ -183,20 +194,30 @@ const updateProfile = async (req, res) => {
             'name', 'mobile', 'email', 'dob', 'gender', 'storeName',
             'actionType', 'pageName', 'category', 'location',
             'education', 'aboutYourself', 'profession', 'professionalExperience', 'sellerPageUrl', 'aboutBusiness',
-            'additionalMobiles', 'contact'
+            'additionalMobiles', 'contact', 'password'
         ];
 
         // 1. Handle Text Fields
         for (const field of fields) {
             if (req.body[field] !== undefined) {
+                // If it's the password, hash it (Pre-save hook doesn't run on findByIdAndUpdate usually, 
+                // but here we are using user.save() later, so it WILL run if we set it directly?)
+                // Actually, User.js pre-save: if (this.isModified('password'))
+                // So setting user.password = req.body.password is fine.
+                
                 // If 'email' or 'sellerPageUrl' are empty strings, set them to undefined
                 if ((field === 'email' || field === 'sellerPageUrl') && req.body[field] === '') {
                     user[field] = undefined;
                 } else if (field === 'email' && req.body.email !== user.email) {
-                    // If email is being updated and is not empty, check for uniqueness
                     const emailExists = await User.findOne({ email: req.body.email });
                     if (emailExists) {
                         return res.status(400).json({ message: 'Email already in use by another account' });
+                    }
+                    user[field] = req.body[field];
+                } else if (field === 'mobile' && req.body.mobile !== user.mobile) {
+                    const mobileExists = await User.findOne({ mobile: req.body.mobile });
+                    if (mobileExists) {
+                        return res.status(400).json({ message: 'Mobile number already in use by another account' });
                     }
                     user[field] = req.body[field];
                 } else {
@@ -732,12 +753,14 @@ const removeNotifyPreference = async (req, res) => {
 };
 
 const checkMobile = async (req, res) => {
-    const { mobile } = req.body;
+    const { mobile, email } = req.body;
     try {
         const user = await User.findOne({ mobile });
+        const matchesEmail = user ? (email ? user.email === email : !user.email) : true;
         res.json({
             exists: !!user,
-            verifiedBy: user ? user.verifiedBy : null
+            verifiedBy: user ? user.verifiedBy : null,
+            matchesEmail: matchesEmail
         });
     } catch (err) {
         console.error('Error checking mobile:', err);

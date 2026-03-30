@@ -129,7 +129,6 @@ exports.createAd = async (req, res) => {
                     verifiedBy: 'Mobile',
                     verifiedNumber: vInfo.number || phone,
                     mobile: vInfo.number || phone, // Store as main mobile too
-                    mVerified: true,               // Official verified status
                     verifiedAt: vInfo.at || new Date(),
                     mobileVerified: true,
                     lastPostCategory: category,
