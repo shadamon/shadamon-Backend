@@ -100,26 +100,16 @@ const loginUser = async (req, res) => {
 
         // Find user by email OR mobile
         let user;
-        if (email && req.body.mobile) {
-            // If both provided, search for user that has BOTH
+        const mobile = req.body.mobile;
+
+        if (email) {
+            // Find by email or mobile (the old login field might contain either)
             user = await User.findOne({
-                $and: [
-                    { $or: [{ email }, { mobile: email }] },
-                    { mobile: req.body.mobile }
-                ]
+                $or: [{ email }, { mobile: email }]
             });
-            if (!user) {
-                return res.status(400).json({ message: 'Mobile and Email do not match. Please ensure both are correct for your account.' });
-            }
-        } else if (email) {
-            user = await User.findOne({
-                $or: [
-                    { email: email },
-                    { mobile: email }
-                ]
-            });
-        } else if (req.body.mobile) {
-            user = await User.findOne({ mobile: req.body.mobile });
+        } else if (mobile) {
+            // Find by mobile directly
+            user = await User.findOne({ mobile });
         }
 
         if (!user) {
@@ -755,12 +745,31 @@ const removeNotifyPreference = async (req, res) => {
 const checkMobile = async (req, res) => {
     const { mobile, email } = req.body;
     try {
-        const user = await User.findOne({ mobile });
-        const matchesEmail = user ? (email ? user.email === email : !user.email) : true;
+        const userByMobile = await User.findOne({ mobile });
+        const userByEmail = email ? await User.findOne({ email }) : null;
+
+        let exists = !!userByMobile;
+        let matchesEmail = true;
+        let emailExists = !!userByEmail;
+
+        if (userByMobile) {
+            // If mobile exists, check if it matches the provided email (if provided)
+            matchesEmail = email ? userByMobile.email === email : !userByMobile.email;
+        } else if (userByEmail) {
+            // Mobile is new, but Email already exists
+            // If the user by email ALREADY has a mobile number, then this new mobile is NOT allowed to be added to this account via this flow (needs to be confirmed/processed as a change)
+            if (userByEmail.mobile && userByEmail.mobile !== mobile) {
+                matchesEmail = false;
+                exists = true; // Treating as existing account that is not matched
+            }
+        }
+
         res.json({
-            exists: !!user,
-            verifiedBy: user ? user.verifiedBy : null,
-            matchesEmail: matchesEmail
+            exists: exists,
+            verifiedBy: userByMobile ? userByMobile.verifiedBy : (userByEmail ? userByEmail.verifiedBy : null),
+            matchesEmail: matchesEmail,
+            emailExists: emailExists,
+            emailUserHasMobile: !!(userByEmail && userByEmail.mobile)
         });
     } catch (err) {
         console.error('Error checking mobile:', err);
