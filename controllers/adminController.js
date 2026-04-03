@@ -319,10 +319,18 @@ const updateUser = async (req, res) => {
 
 const deleteUser = async (req, res) => {
     try {
-        await User.findByIdAndDelete(req.params.id);
-        res.json({ message: 'User deleted' });
+        const userId = req.params.id;
+
+        // Delete all ads associated with the user
+        await Ad.deleteMany({ user: userId });
+
+        // Delete the user
+        await User.findByIdAndDelete(userId);
+
+        res.json({ message: 'User and all associated ads deleted successfully' });
     } catch (err) {
-        res.status(500).json({ message: 'Server error' });
+        console.error('Error deleting user:', err);
+        res.status(500).json({ message: 'Server error during user deletion' });
     }
 };
 
