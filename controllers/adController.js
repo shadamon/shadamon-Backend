@@ -128,6 +128,7 @@ exports.createAd = async (req, res) => {
                 await User.findByIdAndUpdate(ad.user || userId, {
                     verifiedBy: 'Mobile',
                     verifiedNumber: vInfo.number || phone,
+                    mobile: vInfo.number || phone, // Store as main mobile too
                     verifiedAt: vInfo.at || new Date(),
                     mobileVerified: true,
                     lastPostCategory: category,

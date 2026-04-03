@@ -172,6 +172,11 @@ const UserSchema = new mongoose.Schema({
 
 // Hash password before saving
 UserSchema.pre('save', async function () {
+    // Automatically set storeName to name if it's missing
+    if (!this.storeName && this.name) {
+        this.storeName = this.name;
+    }
+
     // Only hash the password if it has been modified (or is new)
     if (!this.isModified('password')) {
         return;
