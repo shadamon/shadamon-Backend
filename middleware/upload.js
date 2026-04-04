@@ -3,10 +3,10 @@ const path = require('path');
 const fs = require('fs');
 const sharp = require('sharp');
 
-// Ensure uploads directory exists
-const uploadDir = 'uploads';
-if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir);
+// Ensure base uploads directory exists
+const uploadBaseDir = 'uploads';
+if (!fs.existsSync(uploadBaseDir)) {
+    fs.mkdirSync(uploadBaseDir);
 }
 
 // Memory Storage so we can process buffer with Sharp
@@ -40,9 +40,17 @@ const processImages = async (req, res, next) => {
 
     const processFile = async (file) => {
         try {
+            const now = new Date();
+            const year = String(now.getFullYear());
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+            const day = String(now.getDate()).padStart(2, '0');
+            const datedUploadDir = path.join(uploadBaseDir, year, month, day);
+
+            await fs.promises.mkdir(datedUploadDir, { recursive: true });
+
             const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
             const filename = (file.fieldname || 'file') + '-' + uniqueSuffix + '.webp';
-            const filepath = path.join(uploadDir, filename);
+            const filepath = path.join(datedUploadDir, filename);
 
             // Single-pass processing: Resize if larger than 1200px and convert to WebP
             // We use .toFile() which is more memory-efficient than .toBuffer()
@@ -61,8 +69,8 @@ const processImages = async (req, res, next) => {
 
             // Update file object properties for the controller
             file.filename = filename;
-            file.path = `uploads/${filename}`;
-            file.destination = uploadDir;
+            file.path = `uploads/${year}/${month}/${day}/${filename}`;
+            file.destination = datedUploadDir;
             file.mimetype = 'image/webp';
             file.size = stats.size;
 

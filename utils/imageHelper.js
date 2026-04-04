@@ -42,7 +42,11 @@ const downloadAndSaveImage = async (url) => {
         const buffer = Buffer.from(response.data);
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
         const fileName = `profile-${uniqueSuffix}.webp`;
-        const uploadDir = path.join(__dirname, '..', 'uploads');
+        const now = new Date();
+        const year = String(now.getFullYear());
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        const uploadDir = path.join(__dirname, '..', 'uploads', year, month, day);
 
         if (!fs.existsSync(uploadDir)) {
             fs.mkdirSync(uploadDir, { recursive: true });
@@ -82,7 +86,7 @@ const downloadAndSaveImage = async (url) => {
 
         await fs.promises.writeFile(filePath, outputBuffer);
 
-        return `uploads/${fileName}`;
+        return `uploads/${year}/${month}/${day}/${fileName}`;
     } catch (err) {
         console.error('Error downloading/saving image:', err.message);
         return null;
@@ -90,7 +94,7 @@ const downloadAndSaveImage = async (url) => {
 };
 
 /**
- * Saves a base64 image to the uploads/ad-positions folder as WebP.
+ * Saves a base64 image to the uploads folder as WebP.
  * @param {string} base64String - The base64 data.
  * @param {string} prefix - Prefix for the filename.
  * @returns {Promise<string|null>} - The path to the saved image.
@@ -103,11 +107,14 @@ const saveAdPositionImage = async (base64String, prefix = 'ad-pos') => {
     try {
         const base64Data = base64String.replace(/^data:image\/\w+;base64,/, "");
         const buffer = Buffer.from(base64Data, 'base64');
-        
+
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
         const fileName = `${prefix}-${uniqueSuffix}.webp`;
-        const subDir = 'ad-positions';
-        const uploadDir = path.join(__dirname, '..', 'uploads', subDir);
+        const now = new Date();
+        const year = String(now.getFullYear());
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        const uploadDir = path.join(__dirname, '..', 'uploads', year, month, day);
 
         if (!fs.existsSync(uploadDir)) {
             fs.mkdirSync(uploadDir, { recursive: true });
@@ -119,7 +126,7 @@ const saveAdPositionImage = async (base64String, prefix = 'ad-pos') => {
             .webp({ quality: 80 })
             .toFile(filePath);
 
-        return `uploads/${subDir}/${fileName}`;
+        return `uploads/${year}/${month}/${day}/${fileName}`;
     } catch (err) {
         console.error('Error saving ad position image:', err.message);
         return null;

@@ -20,25 +20,32 @@ const uploadFields = uploadSettings.fields([
     { name: 'watermarkLogo', maxCount: 1 }
 ]);
 
+const getDatedUploadParts = () => {
+    const now = new Date();
+    const year = String(now.getFullYear());
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const dir = path.join('uploads', year, month, day);
+    return { year, month, day, dir };
+};
+
 const processSettingsImages = async (req, res, next) => {
     if (!req.files) return next();
 
     req.customFiles = {};
-
-    const uploadDir = 'uploads';
-    if (!fs.existsSync(uploadDir)) {
-        fs.mkdirSync(uploadDir);
-    }
 
     const processFile = async (fieldname, fileArray) => {
         if (!fileArray || fileArray.length === 0) return;
         const file = fileArray[0];
 
         try {
+            const { year, month, day, dir } = getDatedUploadParts();
+            await fs.promises.mkdir(dir, { recursive: true });
+
             const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
             // "make rename as logo always" implies keeping 'logo' in filename as prefix or base
             const filename = fieldname + '-logo-' + uniqueSuffix + '.webp';
-            const filepath = path.join(uploadDir, filename);
+            const filepath = path.join(dir, filename);
 
             // Compress these images in 500*500, webp format, and ensure under 100KB
             let quality = 80;
@@ -64,7 +71,7 @@ const processSettingsImages = async (req, res, next) => {
 
             await fs.promises.writeFile(filepath, outputBuffer);
 
-            req.customFiles[fieldname] = filepath.replace(/\\/g, '/');
+            req.customFiles[fieldname] = `uploads/${year}/${month}/${day}/${filename}`;
         } catch (error) {
             console.error(`Error processing image ${fieldname}:`, error);
         }
