@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 
 const subCategorySchema = new mongoose.Schema({
     name: { type: String, required: true },
+    subCategoryNameBn: { type: String, trim: true, default: '' },
     category: { type: mongoose.Schema.Types.ObjectId, ref: 'Category', required: true },
     features: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Feature' }],
     buttonType: { type: String },

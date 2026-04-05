@@ -9,6 +9,7 @@ const subLocationSchema = new mongoose.Schema({
 
 const locationSchema = new mongoose.Schema({
     name: { type: String, required: true, unique: true },
+    locationNameBn: { type: String, trim: true, default: '' },
     slug: { type: String, lowercase: true },
     order: { type: Number, default: 0 },
     image: { type: String },

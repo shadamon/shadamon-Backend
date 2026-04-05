@@ -6,11 +6,12 @@ const { fileToBase64, processImageString } = require('../utils/imageHelper');
 // --- Category Controllers ---
 exports.createCategory = async (req, res) => {
     try {
-        const { name, status, inputType, order } = req.body;
+        const { name, categoryNameBn, status, inputType, order } = req.body;
         const slug = name.toLowerCase().replace(/ /g, '-');
 
         const category = new Category({
             name,
+            categoryNameBn: String(categoryNameBn || '').trim(),
             slug,
             inputType,
             order,
@@ -31,7 +32,7 @@ exports.createCategory = async (req, res) => {
 
 exports.updateCategory = async (req, res) => {
     try {
-        const { name, status, inputType, order } = req.body;
+        const { name, categoryNameBn, status, inputType, order } = req.body;
         const updateData = {
             name,
             status: status === 'true' || status === true,
@@ -39,6 +40,9 @@ exports.updateCategory = async (req, res) => {
             order
         };
         if (name) updateData.slug = name.toLowerCase().replace(/ /g, '-');
+        if (categoryNameBn !== undefined) {
+            updateData.categoryNameBn = String(categoryNameBn || '').trim();
+        }
         if (req.file) {
             updateData.icon = req.file.path.replace(/\\/g, "/");
         }
@@ -71,9 +75,10 @@ exports.deleteCategory = async (req, res) => {
 // --- SubCategory Controllers ---
 exports.createSubCategory = async (req, res) => {
     try {
-        const { name, category, features, buttonType, freePost, order, status, tags, priceBoxShow, priceBoxName } = req.body;
+        const { name, subCategoryNameBn, category, features, buttonType, freePost, order, status, tags, priceBoxShow, priceBoxName } = req.body;
 
         const names = Array.isArray(name) ? name : [name];
+        const nameBns = Array.isArray(subCategoryNameBn) ? subCategoryNameBn : [subCategoryNameBn];
         let featuresArray = [];
         if (features) {
             try {
@@ -85,11 +90,15 @@ exports.createSubCategory = async (req, res) => {
 
         const subCategories = [];
 
-        for (const subName of names) {
-            if (!subName.trim()) continue;
+        for (let index = 0; index < names.length; index++) {
+            const subName = String(names[index] || '').trim();
+            if (!subName) continue;
+
+            const subNameBn = String(nameBns[index] || '').trim();
 
             const subCategory = new SubCategory({
                 name: subName,
+                subCategoryNameBn: subNameBn,
                 category,
                 features: featuresArray,
                 buttonType,
@@ -118,7 +127,7 @@ exports.createSubCategory = async (req, res) => {
 
 exports.updateSubCategory = async (req, res) => {
     try {
-        const { name, category, features, buttonType, freePost, order, status, tags, priceBoxShow, priceBoxName } = req.body;
+        const { name, subCategoryNameBn, category, features, buttonType, freePost, order, status, tags, priceBoxShow, priceBoxName } = req.body;
 
         let featuresArray = [];
         if (features) {
@@ -141,6 +150,9 @@ exports.updateSubCategory = async (req, res) => {
             priceBoxName: priceBoxName,
             tags: tags || []
         };
+        if (subCategoryNameBn !== undefined) {
+            updateData.subCategoryNameBn = String(subCategoryNameBn || '').trim();
+        }
         if (req.file) {
             updateData.image = req.file.path.replace(/\\/g, "/");
         }
@@ -155,7 +167,7 @@ exports.updateSubCategory = async (req, res) => {
 exports.getAllSubCategories = async (req, res) => {
     try {
         const subCategories = await SubCategory.find()
-            .populate('category', 'name')
+            .populate('category', 'name categoryNameBn')
             .populate({ path: 'features', options: { sort: { 'order': 1 } } })
             .sort({ order: 1 });
         res.json({ success: true, data: subCategories });

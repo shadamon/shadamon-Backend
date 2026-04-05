@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 
 const subLocationSchema = new mongoose.Schema({
     name: { type: String, required: true },
+    subLocationNameBn: { type: String, trim: true, default: '' },
     location: { type: mongoose.Schema.Types.ObjectId, ref: 'Location', required: true },
     mapLink: { type: String },
     order: { type: Number, default: 0 },

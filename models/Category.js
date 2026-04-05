@@ -9,6 +9,7 @@ const subcategorySchema = new mongoose.Schema({
 
 const categorySchema = new mongoose.Schema({
     name: { type: String, required: true, unique: true },
+    categoryNameBn: { type: String, trim: true, default: '' },
     slug: { type: String, lowercase: true },
     inputType: { type: String, default: 'Text' },
     order: { type: Number, default: 0 },

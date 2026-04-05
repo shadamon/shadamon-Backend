@@ -5,11 +5,12 @@ const { fileToBase64, processImageString } = require('../utils/imageHelper');
 // --- Location Controllers ---
 exports.createLocation = async (req, res) => {
     try {
-        const { name, status, order } = req.body;
+        const { name, locationNameBn, status, order } = req.body;
         const slug = name.toLowerCase().replace(/ /g, '-');
 
         const location = new Location({
             name,
+            locationNameBn: String(locationNameBn || '').trim(),
             slug,
             order,
             status: status === 'true' || status === true,
@@ -29,13 +30,16 @@ exports.createLocation = async (req, res) => {
 
 exports.updateLocation = async (req, res) => {
     try {
-        const { name, status, order } = req.body;
+        const { name, locationNameBn, status, order } = req.body;
         const updateData = {
             name,
             status: status === 'true' || status === true,
             order
         };
         if (name) updateData.slug = name.toLowerCase().replace(/ /g, '-');
+        if (locationNameBn !== undefined) {
+            updateData.locationNameBn = String(locationNameBn || '').trim();
+        }
         if (req.file) {
             updateData.image = req.file.path.replace(/\\/g, "/");
         }
@@ -70,15 +74,20 @@ exports.deleteLocation = async (req, res) => {
 // --- SubLocation Controllers ---
 exports.createSubLocation = async (req, res) => {
     try {
-        const { name, location, mapLink, order, status } = req.body;
+        const { name, subLocationNameBn, location, mapLink, order, status } = req.body;
         const names = Array.isArray(name) ? name : [name];
+        const nameBns = Array.isArray(subLocationNameBn) ? subLocationNameBn : [subLocationNameBn];
         const subLocations = [];
 
-        for (const subName of names) {
-            if (!subName.trim()) continue;
+        for (let index = 0; index < names.length; index++) {
+            const subName = String(names[index] || '').trim();
+            if (!subName) continue;
+
+            const subNameBn = String(nameBns[index] || '').trim();
 
             const subLocation = new SubLocation({
                 name: subName,
+                subLocationNameBn: subNameBn,
                 location,
                 mapLink,
                 order,
@@ -103,7 +112,7 @@ exports.createSubLocation = async (req, res) => {
 
 exports.updateSubLocation = async (req, res) => {
     try {
-        const { name, location, mapLink, order, status } = req.body;
+        const { name, subLocationNameBn, location, mapLink, order, status } = req.body;
         const updateData = {
             name,
             location,
@@ -111,6 +120,9 @@ exports.updateSubLocation = async (req, res) => {
             order,
             status: status === 'true' || status === true
         };
+        if (subLocationNameBn !== undefined) {
+            updateData.subLocationNameBn = String(subLocationNameBn || '').trim();
+        }
         if (req.file) {
             updateData.image = req.file.path.replace(/\\/g, "/");
         }
@@ -125,7 +137,7 @@ exports.updateSubLocation = async (req, res) => {
 exports.getAllSubLocations = async (req, res) => {
     try {
         const subLocations = await SubLocation.find()
-            .populate('location', 'name')
+            .populate('location', 'name locationNameBn')
             .sort({ order: 1 });
         res.json({ success: true, data: subLocations });
     } catch (err) {
