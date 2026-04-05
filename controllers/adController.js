@@ -11,6 +11,8 @@ const User = require('../models/User'); // Import User model
 const PromotionPlan = require('../models/PromotionPlan'); // Import PromotionPlan model
 const Setting = require('../models/Setting'); // Import Setting model
 
+const getFilterQueryValue = (query, longKey, shortKey) => query[longKey] || query[shortKey];
+
 // @route   POST api/ads
 // @desc    Create a new ad
 // @access  Public (Optional Auth)
@@ -723,7 +725,11 @@ exports.updateAdDetails = async (req, res) => {
 // @access  Public
 exports.getFeedAdsPublic = async (req, res) => {
     try {
-        const { category, subCategory, location, subLocation, promoteTag, sort, search, page = 1 } = req.query;
+        const { promoteTag, sort, search, page = 1 } = req.query;
+        const category = getFilterQueryValue(req.query, 'category', 'c');
+        const subCategory = getFilterQueryValue(req.query, 'subCategory', 'sc');
+        const location = getFilterQueryValue(req.query, 'location', 'l');
+        const subLocation = getFilterQueryValue(req.query, 'subLocation', 'sl');
 
         const now = new Date();
         const PROMOTED_PER_PAGE = 24;
@@ -985,10 +991,14 @@ exports.getFeedAdsPublic = async (req, res) => {
 // @access  Public
 exports.getAllAdsPublic = async (req, res) => {
     try {
-        const { category, subCategory, location, subLocation, promoteTag, sort, search, limit } = req.query;
+        const { promoteTag, sort, search, limit } = req.query;
+        const category = getFilterQueryValue(req.query, 'category', 'c');
+        const subCategory = getFilterQueryValue(req.query, 'subCategory', 'sc');
+        const location = getFilterQueryValue(req.query, 'location', 'l');
+        const subLocation = getFilterQueryValue(req.query, 'subLocation', 'sl');
         const now = new Date();
 
-        let query = { 
+        let query = {
             status: 'active',
             $or: [
                 { adType: 'Promoted', promoteEndDate: { $gte: now } },
@@ -1105,10 +1115,14 @@ exports.getAllAdsPublic = async (req, res) => {
 // @access  Public
 exports.getAdsCount = async (req, res) => {
     try {
-        const { category, subCategory, location, subLocation, promoteTag } = req.query;
+        const { promoteTag } = req.query;
+        const category = getFilterQueryValue(req.query, 'category', 'c');
+        const subCategory = getFilterQueryValue(req.query, 'subCategory', 'sc');
+        const location = getFilterQueryValue(req.query, 'location', 'l');
+        const subLocation = getFilterQueryValue(req.query, 'subLocation', 'sl');
         const now = new Date();
 
-        let query = { 
+        let query = {
             status: 'active',
             $or: [
                 { adType: 'Promoted', promoteEndDate: { $gte: now } },
