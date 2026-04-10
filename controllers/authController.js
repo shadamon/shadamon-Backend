@@ -131,6 +131,10 @@ exports.forgotPasswordRequest = async (req, res) => {
         const user = await User.findOne({ email });
         if (!user) return res.status(404).json({ success: false, message: 'No account found with this email' });
 
+        if (user.accountStatus === 'inactive') {
+            return res.status(403).json({ success: false, message: 'User is deactivate, please contact support' });
+        }
+
         const otp = generateOTP();
 
         // Remove existing OTPs for this user
@@ -162,6 +166,10 @@ exports.forgotPasswordVerify = async (req, res) => {
 
         const user = await User.findOne({ email });
         if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+        if (user.accountStatus === 'inactive') {
+            return res.status(403).json({ success: false, message: 'User is deactivate, please contact support' });
+        }
 
         const record = await OTP.findOne({ userId: user._id, otp });
 

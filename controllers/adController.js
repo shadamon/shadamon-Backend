@@ -919,12 +919,12 @@ exports.getFeedAdsPublic = async (req, res) => {
             }
         }
 
-        // Fetch 1 Categories per page for interleaving (1 category row per cycle/page)
-        const categoriesPromise = Category.find({ postCount: { $gt: 0 } })
-            .select('name icon _id')
-            .sort({ order: 1 })
-            .skip((pageNum - 1) * 1)
-            .limit(1);
+        // Fetch 1 random Category per page for interleaving (randomized variety on every fetch)
+        const categoriesPromise = Category.aggregate([
+            { $match: { postCount: { $gt: 0 } } },
+            { $sample: { size: 1 } },
+            { $project: { name: 1, icon: 1, _id: 1 } }
+        ]);
 
         const [interleavedCategories] = await Promise.all([categoriesPromise]);
 
