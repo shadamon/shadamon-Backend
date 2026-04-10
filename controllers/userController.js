@@ -116,6 +116,10 @@ const loginUser = async (req, res) => {
             return res.status(400).json({ message: 'Invalid credentials' });
         }
 
+        if (user.accountStatus === 'inactive') {
+            return res.status(403).json({ message: 'User is deactivate, please contact support', status: 'inactive' });
+        }
+
         // Compare password
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) {
@@ -323,6 +327,10 @@ const facebookLogin = async (req, res) => {
         let user = await User.findOne({ email });
 
         if (user) {
+            if (user.accountStatus === 'inactive') {
+                return res.status(403).json({ message: 'User is deactivate, please contact support', status: 'inactive' });
+            }
+
             // Update photo if missing (and download it)
             if (!user.photo && pictureUrl) {
                 const localPath = await downloadAndSaveImage(pictureUrl);
@@ -421,6 +429,10 @@ const googleLogin = async (req, res) => {
         let user = await User.findOne({ email });
 
         if (user) {
+            if (user.accountStatus === 'inactive') {
+                return res.status(403).json({ message: 'User is deactivate, please contact support', status: 'inactive' });
+            }
+
             // Update photo if missing (and download it)
             if (!user.photo && picture) {
                 const localPath = await downloadAndSaveImage(picture);
