@@ -60,35 +60,37 @@ exports.createAd = async (req, res) => {
         if (userId) {
             const user = await User.findById(userId);
             if (user) {
-                // 1. Check free post limitations for EVERYONE
-                const subCategoryDoc = await SubCategory.findOne({ name: subCategory });
-                if (subCategoryDoc) {
-                    subCategoryFreeLimit = subCategoryDoc.freePost || 1;
-                    const activeAdCountInSubCategory = await Ad.countDocuments({
-                        user: userId,
-                        subCategory: subCategory,
-                        status: { $in: ['active', 'pending', 'review'] },
-                        adType: { $ne: 'Promoted' }
-                    });
+                const isTrustedMerchant = user.merchantTrustStatus === 'Trusted';
 
-                    if (activeAdCountInSubCategory >= subCategoryFreeLimit) {
-                        // Limit reached: Pause the ad regardless of trust status
-                        adStatus = 'pause';
-                        limitReached = true;
-                        pauseReason = 'LIMIT_EXCEEDED';
-                    } else {
-                        // Limit NOT reached: Check trust status
-                        if (user.merchantTrustStatus === 'Trusted') {
-                            adStatus = 'active';
-                        } else {
-                            adStatus = 'review';
-                        }
-                    }
+                // Check free post limitations first
+                const subCategoryDoc = await SubCategory.findOne({ name: subCategory });
+                if (subCategoryDoc && Number(subCategoryDoc.freePost) > 0) {
+                    subCategoryFreeLimit = Number(subCategoryDoc.freePost);
+                }
+
+                const activeAdCountInSubCategory = await Ad.countDocuments({
+                    user: userId,
+                    subCategory: subCategory,
+                    status: { $in: ['active', 'pending', 'review'] },
+                    adType: { $ne: 'Promoted' }
+                });
+
+                if (activeAdCountInSubCategory >= subCategoryFreeLimit) {
+                    // No free slot left: keep ad in review flow
+                    adStatus = 'review';
+                    limitReached = true;
+                    pauseReason = 'LIMIT_EXCEEDED';
+                } else if (isTrustedMerchant) {
+                    // Trusted + free slot available: publish immediately
+                    adStatus = 'active';
+                } else {
+                    // Untrusted users continue normal review flow
+                    adStatus = 'review';
                 }
             }
         } else {
-            // Anonymous users are treated as untrusted and paused/moderated
-            adStatus = 'pause';
+            // Anonymous users are treated as untrusted and go through review
+            adStatus = 'review';
         }
 
         const newAd = new Ad({

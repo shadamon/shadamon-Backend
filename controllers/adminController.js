@@ -521,6 +521,58 @@ const checkUsername = async (req, res) => {
     }
 };
 
+const loginAsUser = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ message: 'Invalid user id' });
+        }
+
+        const user = await User.findById(id).select('_id name email mobile storeName actionType verifiedBy photo accountStatus');
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        if (user.accountStatus === 'inactive') {
+            return res.status(403).json({ message: 'User is inactive, login is blocked' });
+        }
+
+        user.lastLogin = new Date();
+        await user.save();
+
+        const token = jwt.sign(
+            {
+                id: user._id,
+                email: user.email,
+                role: 'user',
+                loginMode: 'admin',
+                adminId: req.admin && req.admin.id ? req.admin.id : null
+            },
+            process.env.JWT_SECRET,
+            { expiresIn: '7d' }
+        );
+
+        return res.json({
+            success: true,
+            token,
+            user: {
+                id: user._id,
+                name: user.name,
+                email: user.email,
+                mobile: user.mobile,
+                storeName: user.storeName,
+                actionType: user.actionType,
+                verifiedBy: user.verifiedBy,
+                photo: user.photo
+            }
+        });
+    } catch (err) {
+        console.error('Admin login-as-user error:', err);
+        return res.status(500).json({ message: 'Server error while logging in as user' });
+    }
+};
+
 const getTransactions = async (req, res) => {
     try {
         const page = parseInt(req.query.page, 10) || 1;
@@ -647,6 +699,7 @@ module.exports = {
     sendNotification,
     getNotificationTargetCount,
     checkUsername,
+    loginAsUser,
     getTransactions,
     deleteTransaction,
     getCurrentAdmin,
