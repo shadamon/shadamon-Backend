@@ -44,6 +44,7 @@ exports.updateSettings = async (req, res) => {
 
         const {
             productAutoInactiveTime,
+            productAutoActiveTime,
             userRepeatAdViewTime,
             productPhotoLimit,
             blockCheckInHeadline,
@@ -78,6 +79,12 @@ exports.updateSettings = async (req, res) => {
             );
         }
         if (userRepeatAdViewTime !== undefined) setting.userRepeatAdViewTime = parseInt(userRepeatAdViewTime, 10);
+
+        if (productAutoActiveTime !== undefined) {
+            const activeDays = Math.max(0, parseInt(productAutoActiveTime, 10) || 0);
+            setting.productAutoActiveTime = activeDays;
+        }
+
         if (productPhotoLimit !== undefined) setting.productPhotoLimit = parseInt(productPhotoLimit, 10);
 
         if (blockCheckInDescription !== undefined) {

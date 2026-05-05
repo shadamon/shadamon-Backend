@@ -163,6 +163,10 @@ const adSchema = new mongoose.Schema({
     showTill: {
         type: Date
     },
+    autoInactiveAt: {
+        type: Date,
+        default: null
+    },
     rep: {
         type: String
     },

@@ -150,6 +150,7 @@ setInterval(() => {
     console.log('🕒 Running scheduled ad/promotion cleanup...');
     adController.cleanupExpiredPromotions().catch(err => console.error("Promotion Cleanup Failed", err));
     adController.cleanupExpiredAds().catch(err => console.error("Ad Expiration Cleanup Failed", err));
+    adController.autoActivateInactiveAds().catch(err => console.error("Ad Auto Activation Failed", err));
 }, 1000 * 60 * 60); // Run every 1 hour
 
 setInterval(() => {

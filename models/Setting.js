@@ -5,6 +5,7 @@ const settingSchema = new mongoose.Schema({
     favIcon: { type: String, default: null },
     watermarkLogo: { type: String, default: null },
     productAutoInactiveTime: { type: Number, default: 90 },
+    productAutoActiveTime: { type: Number, default: 30 },
     userRepeatAdViewTime: { type: Number, default: 3 },
     productPhotoLimit: { type: Number, default: 5 },
     blockCheckInHeadline: [{ type: String }],

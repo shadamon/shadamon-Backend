@@ -1509,12 +1509,14 @@ exports.promoteAd = async (req, res) => {
         ad.promoteBudget = mergedBudget;
         ad.estimatedReach = estimatedReach;
 
-        // Update showTill: promoteEndDate + setting inactive time
-        const settings = await Setting.findOne();
-        const inactiveDays = settings ? settings.productAutoInactiveTime : 90;
-        const newShowTill = new Date(promoteEndDate);
-        newShowTill.setDate(newShowTill.getDate() + inactiveDays);
-        ad.showTill = newShowTill;
+        // Keep post lifetime independent from promotion lifetime.
+        if (!ad.showTill) {
+            const settings = await Setting.findOne();
+            const inactiveDays = Number(settings?.productAutoInactiveTime) || 90;
+            const tillDate = new Date(ad.createdAt || Date.now());
+            tillDate.setDate(tillDate.getDate() + inactiveDays);
+            ad.showTill = tillDate;
+        }
 
         // Archive previous promotion if it exists
         if (['promoted', 'processing'].includes(String(prevAdType || '').trim().toLowerCase())) {
@@ -1861,23 +1863,82 @@ exports.toggleAdStatusMyAd = async (req, res) => {
 exports.cleanupExpiredAds = async () => {
     try {
         const now = new Date();
-        // We only expire ads that are 'active' or 'review' or 'pause' 
-        // and NOT 'Promoted' or currently 'Processing' for promotion.
-        const result = await Ad.updateMany(
+        // Auto-inactivate active ads and mark when it happened for later auto-reactivation.
+        const activeResult = await Ad.updateMany(
             {
-                status: { $in: ['active', 'review', 'pause'] },
+                status: 'active',
+                adType: { $nin: ['Promoted', 'Processing'] },
+                showTill: { $lt: now }
+            },
+            { $set: { status: 'inactive', autoInactiveAt: now } }
+        );
+
+        // Keep previous behavior for review/pause expiry but do not schedule auto-reactivation for those.
+        const nonActiveResult = await Ad.updateMany(
+            {
+                status: { $in: ['review', 'pause'] },
                 adType: { $nin: ['Promoted', 'Processing'] },
                 showTill: { $lt: now }
             },
             { $set: { status: 'inactive' } }
         );
 
-        if (result.modifiedCount > 0) {
-            console.log(`[Ad Cleanup] Expired ${result.modifiedCount} ads to 'inactive' status.`);
+        const modifiedCount = (activeResult.modifiedCount || 0) + (nonActiveResult.modifiedCount || 0);
+
+        if (modifiedCount > 0) {
+            console.log(`[Ad Cleanup] Expired ${modifiedCount} ads to 'inactive' status.`);
         }
-        return result.modifiedCount;
+        return modifiedCount;
     } catch (err) {
         console.error("[Ad Cleanup] Error during ad expiration cleanup:", err);
+        throw err;
+    }
+};
+
+/**
+ * Automatically reactivate auto-inactivated ads after configured cooldown days.
+ * Re-activated ads receive a fresh active window based on productAutoInactiveTime.
+ */
+exports.autoActivateInactiveAds = async () => {
+    try {
+        const now = new Date();
+        const settings = await Setting.findOne({}, 'productAutoInactiveTime productAutoActiveTime');
+        const autoActiveDays = Math.max(0, Number(settings?.productAutoActiveTime) || 0);
+
+        if (autoActiveDays <= 0) {
+            return 0;
+        }
+
+        const inactiveDays = Math.max(1, Number(settings?.productAutoInactiveTime) || 90);
+        const inactiveCutoff = new Date(now);
+        inactiveCutoff.setDate(inactiveCutoff.getDate() - autoActiveDays);
+
+        const newShowTill = new Date(now);
+        newShowTill.setDate(newShowTill.getDate() + inactiveDays);
+
+        const result = await Ad.updateMany(
+            {
+                status: 'inactive',
+                adType: { $nin: ['Promoted', 'Processing'] },
+                autoInactiveAt: { $ne: null, $lte: inactiveCutoff },
+                showTill: { $lt: now }
+            },
+            {
+                $set: {
+                    status: 'active',
+                    showTill: newShowTill,
+                    autoInactiveAt: null
+                }
+            }
+        );
+
+        if (result.modifiedCount > 0) {
+            console.log(`[Ad Cleanup] Auto-reactivated ${result.modifiedCount} ads after ${autoActiveDays} day(s).`);
+        }
+
+        return result.modifiedCount || 0;
+    } catch (err) {
+        console.error("[Ad Cleanup] Error during auto-reactivation cleanup:", err);
         throw err;
     }
 };
@@ -1889,6 +1950,8 @@ exports.cleanupExpiredAds = async () => {
 exports.cleanupExpiredPromotions = async () => {
     try {
         const now = new Date();
+        const settings = await Setting.findOne();
+        const inactiveDays = Number(settings?.productAutoInactiveTime) || 90;
         const expiredAds = await Ad.find({
             adType: 'Promoted',
             promoteEndDate: { $lt: now }
@@ -1927,6 +1990,13 @@ exports.cleanupExpiredPromotions = async () => {
                 ad.promoteEndDate = undefined;
                 ad.estimatedReach = undefined;
                 ad.labels = [];
+
+                // Ensure promotion never shortens the base post lifetime.
+                const baseShowTill = new Date(ad.createdAt || Date.now());
+                baseShowTill.setDate(baseShowTill.getDate() + inactiveDays);
+                if (!ad.showTill || new Date(ad.showTill) < baseShowTill) {
+                    ad.showTill = baseShowTill;
+                }
 
 
                 // Save the changes

@@ -169,12 +169,6 @@ const successPayment = async (req, res) => {
                     else promoteTag = 'Highlights';
                 }
 
-                // Calculate new showTill: promoteEndDate + setting inactive time
-                const settings = await Setting.findOne();
-                const inactiveDays = settings ? settings.productAutoInactiveTime : 90;
-                const newShowTill = new Date(promoteEndDate);
-                newShowTill.setDate(newShowTill.getDate() + inactiveDays);
-
                 const ad = await Ad.findById(payment.ad);
                 if (ad) {
                     const originalStatus = ad.status;
@@ -256,7 +250,15 @@ const successPayment = async (req, res) => {
                     ad.promoteBudget = mergedBudget;
                     ad.estimatedReach = estimatedReach;
                     ad.promoteTag = promoteTag;
-                    ad.showTill = newShowTill;
+
+                    // Keep post lifetime independent from promotion lifetime.
+                    if (!ad.showTill) {
+                        const settings = await Setting.findOne();
+                        const inactiveDays = Number(settings?.productAutoInactiveTime) || 90;
+                        const tillDate = new Date(ad.createdAt || Date.now());
+                        tillDate.setDate(tillDate.getDate() + inactiveDays);
+                        ad.showTill = tillDate;
+                    }
 
                     // Target calculation (Target/D + total Target Value) in performance units (reach/traffic), not money.
                     ad.targetD = '0';
