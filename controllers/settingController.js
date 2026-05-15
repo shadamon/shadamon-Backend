@@ -17,7 +17,7 @@ exports.getSettings = async (req, res) => {
 
 exports.getDashboardSettings = async (req, res) => {
     try {
-        const setting = await Setting.findOne({}, 'siteLogo favIcon watermarkLogo userRepeatAdViewTime');
+        const setting = await Setting.findOne({}, 'siteLogo favIcon watermarkLogo userRepeatAdViewTime adReShowAfterMinutes');
         res.status(200).json({ success: true, data: setting || {} });
     } catch (error) {
         res.status(500).json({ success: false, message: 'Server error' });
@@ -44,8 +44,8 @@ exports.updateSettings = async (req, res) => {
 
         const {
             productAutoInactiveTime,
-            productAutoActiveTime,
             userRepeatAdViewTime,
+            adReShowAfterMinutes,
             productPhotoLimit,
             blockCheckInHeadline,
             blockCheckInDescription
@@ -79,11 +79,7 @@ exports.updateSettings = async (req, res) => {
             );
         }
         if (userRepeatAdViewTime !== undefined) setting.userRepeatAdViewTime = parseInt(userRepeatAdViewTime, 10);
-
-        if (productAutoActiveTime !== undefined) {
-            const activeDays = Math.max(0, parseInt(productAutoActiveTime, 10) || 0);
-            setting.productAutoActiveTime = activeDays;
-        }
+        if (adReShowAfterMinutes !== undefined) setting.adReShowAfterMinutes = Math.max(0, parseInt(adReShowAfterMinutes, 10) || 0);
 
         if (productPhotoLimit !== undefined) setting.productPhotoLimit = parseInt(productPhotoLimit, 10);
 

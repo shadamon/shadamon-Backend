@@ -1282,10 +1282,29 @@ exports.updateMyAd = async (req, res) => {
         if (priceType !== undefined && priceType !== ad.priceType) { ad.priceType = priceType; isDetailsModified = true; }
         if (features !== undefined) { ad.features = typeof features === 'string' ? JSON.parse(features) : features; isDetailsModified = true; }
 
+        // Check free-post slot for the trusted review bypass
+        let hasFreeSlot = false;
+        if (isTrusted && ad.adType !== 'Promoted') {
+            const subCatForCheck = subCategory || ad.subCategory;
+            const subCatDoc = await SubCategory.findOne({ name: subCatForCheck });
+            const freeLimit = subCatDoc ? Number(subCatDoc.freePost || 1) : 1;
+            const occupiedCount = await Ad.countDocuments({
+                user: req.user.id,
+                subCategory: subCatForCheck,
+                _id: { $ne: ad._id },
+                status: { $in: ['active', 'pending', 'review'] },
+                adType: { $ne: 'Promoted' }
+            });
+            hasFreeSlot = occupiedCount < freeLimit;
+        }
+
         // Set status to review if any detail modified (except for Promoted ads)
+        // Trusted users with a free slot bypass review
         if (isDetailsModified) {
             if (ad.adType !== 'Promoted') {
-                ad.status = 'review';
+                if (!isTrusted || !hasFreeSlot) {
+                    ad.status = 'review';
+                }
             }
             ad.userUpdated = true;
         }
@@ -1318,14 +1337,22 @@ exports.updateMyAd = async (req, res) => {
         }
 
         // Apply Moderation: Any user photo edit goes to review (except for Promoted ads)
+        // Trusted users with a free slot get images applied directly without pending review
         if (isPhotosModified || (req.body.remainingImages && currentImages.length !== oldImages.length)) {
-            ad.pendingImages = newAdImages;
-            ad.userNewPhotos = true;
-            ad.photoStatus = 'pending';
-            if (ad.adType !== 'Promoted') {
-                ad.status = 'review';
+            if (isTrusted && hasFreeSlot && ad.adType !== 'Promoted') {
+                ad.images = newAdImages;
+                ad.pendingImages = [];
+                ad.userNewPhotos = false;
+                ad.photoStatus = 'approved';
+            } else {
+                ad.pendingImages = newAdImages;
+                ad.userNewPhotos = true;
+                ad.photoStatus = 'pending';
+                if (ad.adType !== 'Promoted') {
+                    ad.status = 'review';
+                }
+                // Active images remain as oldImages until approved
             }
-            // Active images remain as oldImages until approved
         }
 
         // Set flags for Admin if modified by User
@@ -1891,54 +1918,6 @@ exports.cleanupExpiredAds = async () => {
         return modifiedCount;
     } catch (err) {
         console.error("[Ad Cleanup] Error during ad expiration cleanup:", err);
-        throw err;
-    }
-};
-
-/**
- * Automatically reactivate auto-inactivated ads after configured cooldown days.
- * Re-activated ads receive a fresh active window based on productAutoInactiveTime.
- */
-exports.autoActivateInactiveAds = async () => {
-    try {
-        const now = new Date();
-        const settings = await Setting.findOne({}, 'productAutoInactiveTime productAutoActiveTime');
-        const autoActiveDays = Math.max(0, Number(settings?.productAutoActiveTime) || 0);
-
-        if (autoActiveDays <= 0) {
-            return 0;
-        }
-
-        const inactiveDays = Math.max(1, Number(settings?.productAutoInactiveTime) || 90);
-        const inactiveCutoff = new Date(now);
-        inactiveCutoff.setDate(inactiveCutoff.getDate() - autoActiveDays);
-
-        const newShowTill = new Date(now);
-        newShowTill.setDate(newShowTill.getDate() + inactiveDays);
-
-        const result = await Ad.updateMany(
-            {
-                status: 'inactive',
-                adType: { $nin: ['Promoted', 'Processing'] },
-                autoInactiveAt: { $ne: null, $lte: inactiveCutoff },
-                showTill: { $lt: now }
-            },
-            {
-                $set: {
-                    status: 'active',
-                    showTill: newShowTill,
-                    autoInactiveAt: null
-                }
-            }
-        );
-
-        if (result.modifiedCount > 0) {
-            console.log(`[Ad Cleanup] Auto-reactivated ${result.modifiedCount} ads after ${autoActiveDays} day(s).`);
-        }
-
-        return result.modifiedCount || 0;
-    } catch (err) {
-        console.error("[Ad Cleanup] Error during auto-reactivation cleanup:", err);
         throw err;
     }
 };
