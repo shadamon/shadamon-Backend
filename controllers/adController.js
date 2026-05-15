@@ -13,6 +13,14 @@ const Setting = require('../models/Setting'); // Import Setting model
 
 const getFilterQueryValue = (query, longKey, shortKey) => query[longKey] || query[shortKey];
 
+// Returns 1 (00:00-07:59), 2 (08:00-15:59), or 3 (16:00-23:59)
+const getCurrentTimeSlot = () => {
+    const h = new Date().getHours();
+    if (h < 8) return 1;
+    if (h < 16) return 2;
+    return 3;
+};
+
 // @route   POST api/ads
 // @desc    Create a new ad
 // @access  Public (Optional Auth)
@@ -827,7 +835,7 @@ exports.getFeedAdsPublic = async (req, res) => {
         };
 
         const selectFieldsPromoted =
-            'headline description features labels views price images location subLocation category subCategory createdAt deliveryCount user adType phone hidePhone additionalPhones promotedViews promotedDeliveryCount dailyViewsCount dailyDeliveryCount promoteStartDate promoteEndDate promoteType trafficLink trafficButtonType promoteTag';
+            'headline description features labels views price images location subLocation category subCategory createdAt deliveryCount user adType phone hidePhone additionalPhones promotedViews promotedDeliveryCount dailyViewsCount dailyDeliveryCount slotDeliveryCount currentSlot promoteStartDate promoteEndDate promoteType trafficLink trafficButtonType promoteTag targetD';
         const selectFieldsFree =
             'headline description features labels views price images location subLocation category subCategory createdAt deliveryCount user adType phone hidePhone additionalPhones promotedViews promotedDeliveryCount dailyViewsCount dailyDeliveryCount promoteStartDate promoteEndDate';
         const populateUserFields =
@@ -838,7 +846,7 @@ exports.getFeedAdsPublic = async (req, res) => {
         let hasMore = false;
 
         if (onlyPromotedByTag) {
-            // Priority Ranking: Rank by (TargetD - dailyViewsCount) to focus on ads needing reach
+            // Priority Ranking: sort by per-slot gap so ads rotate every ~8 hours
             const promotedItems = await Ad.aggregate([
                 { $match: activePromotedQuery },
                 {
@@ -848,10 +856,11 @@ exports.getFeedAdsPublic = async (req, res) => {
                 },
                 {
                     $addFields: {
-                        reachGap: { $subtract: ["$targetDNum", "$dailyViewsCount"] }
+                        slotTarget: { $ceil: { $divide: ["$targetDNum", 3] } },
+                        slotGap: { $subtract: [{ $ceil: { $divide: ["$targetDNum", 3] } }, "$slotDeliveryCount"] }
                     }
                 },
-                { $sort: { reachGap: -1, createdAt: -1 } },
+                { $sort: { slotGap: -1, createdAt: -1 } },
                 { $skip: (pageNum - 1) * PROMOTED_PER_PAGE },
                 { $limit: PROMOTED_PER_PAGE },
                 { $project: { _id: 1 } }
@@ -957,15 +966,24 @@ exports.getFeedAdsPublic = async (req, res) => {
                 .map(ad => ad._id);
             const today = new Date();
             today.setHours(0, 0, 0, 0);
+            const slot = getCurrentTimeSlot();
 
+            // New day: reset both daily and slot counters
             await Ad.updateMany(
                 { _id: { $in: adIds }, lastDeliveryDate: { $lt: today } },
-                { $set: { dailyDeliveryCount: 0, lastDeliveryDate: new Date() } }
+                { $set: { dailyDeliveryCount: 0, slotDeliveryCount: 0, currentSlot: slot, lastDeliveryDate: new Date() } }
             );
 
+            // Same day but slot changed: reset slot counter only
+            await Ad.updateMany(
+                { _id: { $in: adIds }, lastDeliveryDate: { $gte: today }, currentSlot: { $ne: slot } },
+                { $set: { slotDeliveryCount: 0, currentSlot: slot } }
+            );
+
+            // Increment all delivery counters
             await Ad.updateMany(
                 { _id: { $in: adIds } },
-                { $inc: { deliveryCount: 1, dailyDeliveryCount: 1 }, $set: { lastDeliveryDate: new Date() } }
+                { $inc: { deliveryCount: 1, dailyDeliveryCount: 1, slotDeliveryCount: 1 }, $set: { lastDeliveryDate: new Date(), currentSlot: slot } }
             ).catch(err => console.error("Error updating delivery counts:", err));
 
             if (promotedActiveIds.length > 0) {

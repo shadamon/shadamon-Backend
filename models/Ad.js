@@ -120,6 +120,14 @@ const adSchema = new mongoose.Schema({
         type: Number,
         default: 0
     },
+    slotDeliveryCount: {
+        type: Number,
+        default: 0
+    },
+    currentSlot: {
+        type: Number,
+        default: 0
+    },
     lastDeliveryDate: {
         type: Date,
         default: Date.now
