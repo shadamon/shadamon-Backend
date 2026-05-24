@@ -70,22 +70,22 @@ exports.createAd = async (req, res) => {
             if (user) {
                 const isTrustedMerchant = user.merchantTrustStatus === 'Trusted';
 
-                // Check free post limitations first
+                // Check free post limitations at category level
                 const subCategoryDoc = await SubCategory.findOne({ name: subCategory });
                 if (subCategoryDoc && Number(subCategoryDoc.freePost) > 0) {
                     subCategoryFreeLimit = Number(subCategoryDoc.freePost);
                 }
 
-                const activeAdCountInSubCategory = await Ad.countDocuments({
+                const activeAdCountInCategory = await Ad.countDocuments({
                     user: userId,
-                    subCategory: subCategory,
+                    category: category,
                     status: { $in: ['active', 'pending', 'review'] },
                     adType: { $ne: 'Promoted' }
                 });
 
-                if (activeAdCountInSubCategory >= subCategoryFreeLimit) {
-                    // No free slot left: keep ad in review flow
-                    adStatus = 'review';
+                if (activeAdCountInCategory >= subCategoryFreeLimit) {
+                    // Category free limit reached: always pause regardless of merchant trust status
+                    adStatus = 'pause';
                     limitReached = true;
                     pauseReason = 'LIMIT_EXCEEDED';
                 } else if (isTrustedMerchant) {
@@ -1190,20 +1190,28 @@ exports.getSingleAdPublic = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Ad not found' });
         }
 
-        // Increment view 
+        // Increment view
         const today = new Date();
         today.setHours(0, 0, 0, 0);
+        const slot = getCurrentTimeSlot();
 
         let update = {
             $inc: { views: 1 },
-            $set: { lastViewsDate: new Date() }
+            $set: { lastViewsDate: new Date(), currentSlot: slot }
         };
 
-        // Handle dailyViewsCount logic
+        // Handle dailyViewsCount and slotViewsCount logic
         if (!ad.lastViewsDate || ad.lastViewsDate < today) {
+            // New day: reset both daily and slot view counters
             update.$set.dailyViewsCount = 1;
+            update.$set.slotViewsCount = 1;
+        } else if (ad.currentSlot !== slot) {
+            // Same day, new slot: reset slot views only
+            update.$set.slotViewsCount = 1;
+            update.$inc.dailyViewsCount = 1;
         } else {
             update.$inc.dailyViewsCount = 1;
+            update.$inc.slotViewsCount = 1;
         }
 
         // Increment promotedViews if ad is promoted

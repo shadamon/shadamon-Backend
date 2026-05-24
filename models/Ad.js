@@ -140,6 +140,10 @@ const adSchema = new mongoose.Schema({
         type: Number,
         default: 0
     },
+    slotViewsCount: {
+        type: Number,
+        default: 0
+    },
     lastViewsDate: {
         type: Date,
         default: Date.now
