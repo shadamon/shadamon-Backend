@@ -857,7 +857,7 @@ exports.getFeedAdsPublic = async (req, res) => {
                 {
                     $addFields: {
                         slotTarget: { $ceil: { $divide: ["$targetDNum", 3] } },
-                        slotGap: { $subtract: [{ $ceil: { $divide: ["$targetDNum", 3] } }, "$slotDeliveryCount"] }
+                        slotGap: { $subtract: [{ $ceil: { $divide: ["$targetDNum", 3] } }, "$slotViewsCount"] }
                     }
                 },
                 { $sort: { slotGap: -1, createdAt: -1 } },
@@ -887,7 +887,7 @@ exports.getFeedAdsPublic = async (req, res) => {
             const promotedPages = Math.ceil(promotedCount / PROMOTED_PER_PAGE);
 
             if (promotedPages > 0 && pageNum <= promotedPages) {
-                // Priority Ranking: Rank by (TargetD - dailyViewsCount) to focus on ads needing reach
+                // Priority Ranking: Rank by slot view gap so ads needing more views in the current slot show first
                 const promotedItems = await Ad.aggregate([
                     { $match: activePromotedQuery },
                     {
@@ -897,10 +897,11 @@ exports.getFeedAdsPublic = async (req, res) => {
                     },
                     {
                         $addFields: {
-                            reachGap: { $subtract: ["$targetDNum", "$dailyViewsCount"] }
+                            slotTarget: { $ceil: { $divide: ["$targetDNum", 3] } },
+                            slotGap: { $subtract: [{ $ceil: { $divide: ["$targetDNum", 3] } }, "$slotViewsCount"] }
                         }
                     },
-                    { $sort: { reachGap: -1, createdAt: -1 } },
+                    { $sort: { slotGap: -1, createdAt: -1 } },
                     { $skip: (pageNum - 1) * PROMOTED_PER_PAGE },
                     { $limit: PROMOTED_PER_PAGE },
                     { $project: { _id: 1 } }
