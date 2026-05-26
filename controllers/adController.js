@@ -845,8 +845,10 @@ exports.getFeedAdsPublic = async (req, res) => {
         let freeAds = [];
         let hasMore = false;
 
+        const currentSlotNum = getCurrentTimeSlot();
+
         if (onlyPromotedByTag) {
-            // Priority Ranking: sort by per-slot gap so ads rotate every ~8 hours
+            // Priority Ranking: sort by per-slot view gap — ad needing most views this slot shows first
             const promotedItems = await Ad.aggregate([
                 { $match: activePromotedQuery },
                 {
@@ -855,9 +857,22 @@ exports.getFeedAdsPublic = async (req, res) => {
                     }
                 },
                 {
+                    // Only count slotViewsCount if the stored currentSlot matches the actual slot;
+                    // otherwise the field is stale from a previous slot and must be treated as 0
+                    $addFields: {
+                        effectiveSlotViews: {
+                            $cond: {
+                                if: { $eq: ["$currentSlot", currentSlotNum] },
+                                then: { $ifNull: ["$slotViewsCount", 0] },
+                                else: 0
+                            }
+                        }
+                    }
+                },
+                {
                     $addFields: {
                         slotTarget: { $ceil: { $divide: ["$targetDNum", 3] } },
-                        slotGap: { $subtract: [{ $ceil: { $divide: ["$targetDNum", 3] } }, { $ifNull: ["$slotViewsCount", 0] }] }
+                        slotGap: { $subtract: [{ $ceil: { $divide: ["$targetDNum", 3] } }, "$effectiveSlotViews"] }
                     }
                 },
                 { $sort: { slotGap: -1, createdAt: -1 } },
@@ -887,7 +902,7 @@ exports.getFeedAdsPublic = async (req, res) => {
             const promotedPages = Math.ceil(promotedCount / PROMOTED_PER_PAGE);
 
             if (promotedPages > 0 && pageNum <= promotedPages) {
-                // Priority Ranking: Rank by slot view gap so ads needing more views in the current slot show first
+                // Priority Ranking: Rank by slot view gap — ad needing most views this slot shows first
                 const promotedItems = await Ad.aggregate([
                     { $match: activePromotedQuery },
                     {
@@ -896,9 +911,22 @@ exports.getFeedAdsPublic = async (req, res) => {
                         }
                     },
                     {
+                        // Only count slotViewsCount if the stored currentSlot matches the actual slot;
+                        // otherwise the field is stale from a previous slot and must be treated as 0
+                        $addFields: {
+                            effectiveSlotViews: {
+                                $cond: {
+                                    if: { $eq: ["$currentSlot", currentSlotNum] },
+                                    then: { $ifNull: ["$slotViewsCount", 0] },
+                                    else: 0
+                                }
+                            }
+                        }
+                    },
+                    {
                         $addFields: {
                             slotTarget: { $ceil: { $divide: ["$targetDNum", 3] } },
-                            slotGap: { $subtract: [{ $ceil: { $divide: ["$targetDNum", 3] } }, { $ifNull: ["$slotViewsCount", 0] }] }
+                            slotGap: { $subtract: [{ $ceil: { $divide: ["$targetDNum", 3] } }, "$effectiveSlotViews"] }
                         }
                     },
                     { $sort: { slotGap: -1, createdAt: -1 } },
