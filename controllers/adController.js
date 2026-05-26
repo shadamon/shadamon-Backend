@@ -857,7 +857,7 @@ exports.getFeedAdsPublic = async (req, res) => {
                 {
                     $addFields: {
                         slotTarget: { $ceil: { $divide: ["$targetDNum", 3] } },
-                        slotGap: { $subtract: [{ $ceil: { $divide: ["$targetDNum", 3] } }, "$slotViewsCount"] }
+                        slotGap: { $subtract: [{ $ceil: { $divide: ["$targetDNum", 3] } }, { $ifNull: ["$slotViewsCount", 0] }] }
                     }
                 },
                 { $sort: { slotGap: -1, createdAt: -1 } },
@@ -898,7 +898,7 @@ exports.getFeedAdsPublic = async (req, res) => {
                     {
                         $addFields: {
                             slotTarget: { $ceil: { $divide: ["$targetDNum", 3] } },
-                            slotGap: { $subtract: [{ $ceil: { $divide: ["$targetDNum", 3] } }, "$slotViewsCount"] }
+                            slotGap: { $subtract: [{ $ceil: { $divide: ["$targetDNum", 3] } }, { $ifNull: ["$slotViewsCount", 0] }] }
                         }
                     },
                     { $sort: { slotGap: -1, createdAt: -1 } },
@@ -969,16 +969,16 @@ exports.getFeedAdsPublic = async (req, res) => {
             today.setHours(0, 0, 0, 0);
             const slot = getCurrentTimeSlot();
 
-            // New day: reset both daily and slot counters
+            // New day: reset both daily and slot counters (delivery + views)
             await Ad.updateMany(
                 { _id: { $in: adIds }, lastDeliveryDate: { $lt: today } },
-                { $set: { dailyDeliveryCount: 0, slotDeliveryCount: 0, currentSlot: slot, lastDeliveryDate: new Date() } }
+                { $set: { dailyDeliveryCount: 0, slotDeliveryCount: 0, slotViewsCount: 0, currentSlot: slot, lastDeliveryDate: new Date() } }
             );
 
-            // Same day but slot changed: reset slot counter only
+            // Same day but slot changed: reset slot counters only (delivery + views)
             await Ad.updateMany(
                 { _id: { $in: adIds }, lastDeliveryDate: { $gte: today }, currentSlot: { $ne: slot } },
-                { $set: { slotDeliveryCount: 0, currentSlot: slot } }
+                { $set: { slotDeliveryCount: 0, slotViewsCount: 0, currentSlot: slot } }
             );
 
             // Increment all delivery counters
