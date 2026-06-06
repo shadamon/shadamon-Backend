@@ -987,7 +987,15 @@ exports.getFeedAdsPublic = async (req, res) => {
             return adObj;
         });
 
-        // Impression counting
+        // Send response first — impression counting is fire-and-forget and must never block the feed
+        res.json({
+            success: true,
+            hasMore,
+            data: optimizedAds,
+            feedCategories: interleavedCategories
+        });
+
+        // Impression counting (async, non-blocking — errors here are logged but never reach the client)
         if (allAds.length > 0) {
             const adIds = allAds.map(ad => ad._id);
             const promotedActiveIds = allAds
@@ -996,39 +1004,88 @@ exports.getFeedAdsPublic = async (req, res) => {
             const today = new Date();
             today.setHours(0, 0, 0, 0);
             const slot = getCurrentTimeSlot();
+            const now2 = new Date();
 
-            // New day: reset both daily and slot counters (delivery + views)
-            await Ad.updateMany(
+            // New day: compute dailyDeficit from yesterday's shortfall, reset slotDeficit + all counters
+            Ad.updateMany(
                 { _id: { $in: adIds }, lastDeliveryDate: { $lt: today } },
-                { $set: { dailyDeliveryCount: 0, slotDeliveryCount: 0, slotViewsCount: 0, currentSlot: slot, lastDeliveryDate: new Date() } }
-            );
+                [{
+                    $set: {
+                        dailyDeficit: {
+                            $let: {
+                                vars: {
+                                    baseD: { $max: [0, { $convert: { input: '$targetD', to: 'double', onError: 0, onNull: 0 } }] },
+                                    prevDeficit: { $ifNull: ['$dailyDeficit', 0] },
+                                    dayViews: { $ifNull: ['$dailyViewsCount', 0] }
+                                },
+                                in: {
+                                    $let: {
+                                        vars: { effD: { $min: [{ $add: ['$$baseD', '$$prevDeficit'] }, { $multiply: ['$$baseD', 3] }] } },
+                                        in: { $min: [{ $max: [0, { $subtract: ['$$effD', '$$dayViews'] }] }, { $multiply: ['$$baseD', 2] }] }
+                                    }
+                                }
+                            }
+                        },
+                        slotDeficit: 0,
+                        dailyDeliveryCount: 0,
+                        slotDeliveryCount: 0,
+                        dailyViewsCount: 0,
+                        slotViewsCount: 0,
+                        currentSlot: slot,
+                        lastDeliveryDate: now2
+                    }
+                }]
+            ).catch(err => console.error('Day-reset updateMany error:', err.message));
 
-            // Same day but slot changed: reset slot counters only (delivery + views)
-            await Ad.updateMany(
+            // Same day, new slot: compute slotDeficit from previous slot's shortfall, reset slot counters
+            Ad.updateMany(
                 { _id: { $in: adIds }, lastDeliveryDate: { $gte: today }, currentSlot: { $ne: slot } },
-                { $set: { slotDeliveryCount: 0, slotViewsCount: 0, currentSlot: slot } }
-            );
+                [{
+                    $set: {
+                        slotDeficit: {
+                            $let: {
+                                vars: {
+                                    baseD: { $max: [0, { $convert: { input: '$targetD', to: 'double', onError: 0, onNull: 0 } }] },
+                                    prevDailyDeficit: { $ifNull: ['$dailyDeficit', 0] },
+                                    prevSlotDeficit: { $ifNull: ['$slotDeficit', 0] },
+                                    slotViews: { $ifNull: ['$slotViewsCount', 0] }
+                                },
+                                in: {
+                                    $let: {
+                                        vars: {
+                                            effD: { $min: [{ $add: ['$$baseD', '$$prevDailyDeficit'] }, { $multiply: ['$$baseD', 3] }] },
+                                            baseSlotT: { $ceil: { $divide: ['$$baseD', 3] } }
+                                        },
+                                        in: {
+                                            $let: {
+                                                vars: { effSlotT: { $add: [{ $ceil: { $divide: ['$$effD', 3] } }, '$$prevSlotDeficit'] } },
+                                                in: { $min: [{ $max: [0, { $subtract: ['$$effSlotT', '$$slotViews'] }] }, { $multiply: ['$$baseSlotT', 2] }] }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        slotDeliveryCount: 0,
+                        slotViewsCount: 0,
+                        currentSlot: slot
+                    }
+                }]
+            ).catch(err => console.error('Slot-reset updateMany error:', err.message));
 
-            // Increment all delivery counters
-            await Ad.updateMany(
+            // Increment delivery counters for all ads in this feed response
+            Ad.updateMany(
                 { _id: { $in: adIds } },
-                { $inc: { deliveryCount: 1, dailyDeliveryCount: 1, slotDeliveryCount: 1 }, $set: { lastDeliveryDate: new Date(), currentSlot: slot } }
-            ).catch(err => console.error("Error updating delivery counts:", err));
+                { $inc: { deliveryCount: 1, dailyDeliveryCount: 1, slotDeliveryCount: 1 }, $set: { lastDeliveryDate: now2, currentSlot: slot } }
+            ).catch(err => console.error('Delivery count updateMany error:', err.message));
 
             if (promotedActiveIds.length > 0) {
-                await Ad.updateMany(
+                Ad.updateMany(
                     { _id: { $in: promotedActiveIds } },
                     { $inc: { promotedDeliveryCount: 1 } }
-                ).catch(err => console.error("Error updating promoted delivery counts:", err));
+                ).catch(err => console.error('Promoted delivery count updateMany error:', err.message));
             }
         }
-
-        res.json({
-            success: true,
-            hasMore,
-            data: optimizedAds,
-            feedCategories: interleavedCategories
-        });
     } catch (err) {
         console.error("Error fetching feed ads:", err.message);
         res.status(500).json({ success: false, message: 'Server Error' });
