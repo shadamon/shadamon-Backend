@@ -17,7 +17,7 @@ exports.getSettings = async (req, res) => {
 
 exports.getDashboardSettings = async (req, res) => {
     try {
-        const setting = await Setting.findOne({}, 'siteLogo favIcon watermarkLogo userRepeatAdViewTime adReShowAfterMinutes');
+        const setting = await Setting.findOne({}, 'siteLogo favIcon watermarkLogo ogImage userRepeatAdViewTime adReShowAfterMinutes');
         res.status(200).json({ success: true, data: setting || {} });
     } catch (error) {
         res.status(500).json({ success: false, message: 'Server error' });
@@ -134,6 +134,13 @@ exports.updateSettings = async (req, res) => {
                     if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
                 }
                 setting.watermarkLogo = req.customFiles.watermarkLogo;
+            }
+            if (req.customFiles.ogImage) {
+                if (setting.ogImage) {
+                    const oldPath = path.join(__dirname, '..', setting.ogImage);
+                    if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+                }
+                setting.ogImage = req.customFiles.ogImage;
             }
         }
 

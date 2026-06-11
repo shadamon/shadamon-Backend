@@ -17,7 +17,8 @@ const uploadSettings = multer({
 const uploadFields = uploadSettings.fields([
     { name: 'siteLogo', maxCount: 1 },
     { name: 'favIcon', maxCount: 1 },
-    { name: 'watermarkLogo', maxCount: 1 }
+    { name: 'watermarkLogo', maxCount: 1 },
+    { name: 'ogImage', maxCount: 1 }
 ]);
 
 const getDatedUploadParts = () => {
@@ -34,7 +35,7 @@ const processSettingsImages = async (req, res, next) => {
 
     req.customFiles = {};
 
-    const processFile = async (fieldname, fileArray) => {
+    const processFile = async (fieldname, fileArray, resizeWidth = 500, resizeHeight = 500, maxSizeBytes = 100 * 1024) => {
         if (!fileArray || fileArray.length === 0) return;
         const file = fileArray[0];
 
@@ -43,25 +44,22 @@ const processSettingsImages = async (req, res, next) => {
             await fs.promises.mkdir(dir, { recursive: true });
 
             const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-            // "make rename as logo always" implies keeping 'logo' in filename as prefix or base
-            const filename = fieldname + '-logo-' + uniqueSuffix + '.webp';
+            const filename = fieldname + '-' + uniqueSuffix + '.webp';
             const filepath = path.join(dir, filename);
 
-            // Compress these images in 500*500, webp format, and ensure under 100KB
             let quality = 80;
             let outputBuffer = await sharp(file.buffer)
-                .resize(500, 500, {
+                .resize(resizeWidth, resizeHeight, {
                     fit: sharp.fit.inside,
                     withoutEnlargement: true
                 })
                 .webp({ quality })
                 .toBuffer();
 
-            // Loop to reduce quality if size is > 100KB
-            while (outputBuffer.length > 100 * 1024 && quality > 20) {
+            while (outputBuffer.length > maxSizeBytes && quality > 20) {
                 quality -= 10;
                 outputBuffer = await sharp(file.buffer)
-                    .resize(500, 500, {
+                    .resize(resizeWidth, resizeHeight, {
                         fit: sharp.fit.inside,
                         withoutEnlargement: true
                     })
@@ -79,9 +77,10 @@ const processSettingsImages = async (req, res, next) => {
 
     try {
         await Promise.all([
-            processFile('siteLogo', req.files['siteLogo']),
-            processFile('favIcon', req.files['favIcon']),
-            processFile('watermarkLogo', req.files['watermarkLogo']),
+            processFile('siteLogo', req.files['siteLogo'], 500, 500, 100 * 1024),
+            processFile('favIcon', req.files['favIcon'], 500, 500, 100 * 1024),
+            processFile('watermarkLogo', req.files['watermarkLogo'], 500, 500, 100 * 1024),
+            processFile('ogImage', req.files['ogImage'], 1200, 630, 500 * 1024),
         ]);
         next();
     } catch (err) {
