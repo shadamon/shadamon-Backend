@@ -167,7 +167,11 @@ const UserSchema = new mongoose.Schema({
     lastPostCategory: { type: String },
     lastPostSubCategory: { type: String },
     lastPostLocation: { type: String },
-    lastPostSubLocation: { type: String }
+    lastPostSubLocation: { type: String },
+    connectsBalance: {
+        type: Number,
+        default: 0
+    }
 });
 
 // Hash password before saving

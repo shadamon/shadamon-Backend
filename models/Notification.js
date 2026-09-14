@@ -48,7 +48,7 @@ const NotificationSchema = new mongoose.Schema({
     },
     type: {
         type: String,
-        enum: ['admin_notification', 'system_alert'],
+        enum: ['admin_notification', 'system_alert', 'invite'],
         default: 'admin_notification'
     },
     isRead: {
