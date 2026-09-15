@@ -155,6 +155,12 @@ const adSchema = new mongoose.Schema({
     price: {
         type: Number
     },
+    minInvestment: {
+        type: Number
+    },
+    maxInvestment: {
+        type: Number
+    },
     priceType: {
         type: String,
         enum: ['Negotiable', 'Fixed'],

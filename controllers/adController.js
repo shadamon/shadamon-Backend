@@ -26,14 +26,17 @@ const getCurrentTimeSlot = () => {
 // @access  Public (Optional Auth)
 exports.createAd = async (req, res) => {
     try {
-        // Optional: Associate with user if logged in
+        // Require user authentication for posting ads and deducting connects
         let userId = null;
         if (req.user) {
             const user = await User.findById(req.user.id);
             if (user) {
                 userId = user._id;
-                // Removed verification check as per requirement
             }
+        }
+        
+        if (!userId) {
+            return res.status(401).json({ success: false, message: 'You must be logged in to post an ad.' });
         }
 
         const {
@@ -48,6 +51,8 @@ exports.createAd = async (req, res) => {
             url,
             actionType,
             price,
+            minInvestment,
+            maxInvestment,
             priceType,
             features,
             verificationInfo
@@ -68,6 +73,28 @@ exports.createAd = async (req, res) => {
         if (userId) {
             const user = await User.findById(userId);
             if (user) {
+                // Task 5: Connect deduction logic
+                const requiredConnects = 1; // Default 1 connect per post
+                if ((user.connectsBalance || 0) < requiredConnects) {
+                    return res.status(403).json({ 
+                        success: false, 
+                        code: 'INSUFFICIENT_CONNECTS', 
+                        message: 'Not enough connects to post this ad. Please upgrade your package.' 
+                    });
+                }
+
+                // Atomically decrement connect balance
+                user.connectsBalance = (user.connectsBalance || 0) - requiredConnects;
+                await user.save();
+
+                // Create a connect log
+                const ConnectLog = require('../models/ConnectLog');
+                await ConnectLog.create({
+                    userId: user._id,
+                    actionType: 'post_ad',
+                    amountSpent: requiredConnects
+                });
+
                 const isTrustedMerchant = user.merchantTrustStatus === 'Trusted';
 
                 // Check free post limitations at category level
@@ -118,6 +145,8 @@ exports.createAd = async (req, res) => {
             images: imagePaths,
             adType: 'Free',
             price,
+            minInvestment,
+            maxInvestment,
             priceType,
             features: features ? (typeof features === 'string' ? JSON.parse(features) : features) : {},
             status: adStatus,
@@ -826,8 +855,7 @@ exports.getFeedAdsPublic = async (req, res) => {
                 },
                 {
                     $or: [
-                        { adType: 'Promoted', promoteEndDate: { $gte: now } },
-                        { adType: 'Processing' },
+                        { showTill: { $exists: false } },
                         { showTill: { $gte: now } }
                     ]
                 }
@@ -835,9 +863,9 @@ exports.getFeedAdsPublic = async (req, res) => {
         };
 
         const selectFieldsPromoted =
-            'headline description features labels views price images location subLocation category subCategory createdAt deliveryCount user adType phone hidePhone additionalPhones promotedViews promotedDeliveryCount dailyViewsCount dailyDeliveryCount slotDeliveryCount currentSlot promoteStartDate promoteEndDate promoteType trafficLink trafficButtonType promoteTag targetD';
+            'headline description features labels views price minInvestment maxInvestment images location subLocation category subCategory createdAt deliveryCount user adType phone hidePhone additionalPhones promotedViews promotedDeliveryCount dailyViewsCount dailyDeliveryCount slotDeliveryCount currentSlot promoteStartDate promoteEndDate promoteType trafficLink trafficButtonType promoteTag targetD';
         const selectFieldsFree =
-            'headline description features labels views price images location subLocation category subCategory createdAt deliveryCount user adType phone hidePhone additionalPhones promotedViews promotedDeliveryCount dailyViewsCount dailyDeliveryCount promoteStartDate promoteEndDate';
+            'headline description features labels views price minInvestment maxInvestment images location subLocation category subCategory createdAt deliveryCount user adType phone hidePhone additionalPhones promotedViews promotedDeliveryCount dailyViewsCount dailyDeliveryCount promoteStartDate promoteEndDate';
         const populateUserFields =
             'name storeName photo photoStatus storeLogo storeBanner merchantType createdAt verifiedBy mVerified sellerPageUrl followers rating ratingCount';
 
@@ -1152,7 +1180,7 @@ exports.getAllAdsPublic = async (req, res) => {
 
         // Fetch active ads
         let adsQuery = Ad.find(query)
-            .select('headline description features labels views price images location subLocation category subCategory createdAt deliveryCount user adType phone hidePhone additionalPhones promotedViews promotedDeliveryCount dailyViewsCount dailyDeliveryCount promoteStartDate promoteEndDate')
+            .select('headline description features labels views price minInvestment maxInvestment images location subLocation category subCategory createdAt deliveryCount user adType phone hidePhone additionalPhones promotedViews promotedDeliveryCount dailyViewsCount dailyDeliveryCount promoteStartDate promoteEndDate')
             .populate('user', 'name storeName photo photoStatus storeLogo storeBanner merchantType createdAt verifiedBy mVerified sellerPageUrl followers rating ratingCount')
             .sort(sortQuery);
 

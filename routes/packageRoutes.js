@@ -9,6 +9,6 @@ router.put('/:id', verifyToken, packageController.updatePackage);
 router.delete('/:id', verifyToken, packageController.deletePackage);
 
 // Override user connects (Admin only)
-router.post('/user-connects', verifyToken, packageController.updateUserConnects);
+router.post('/manual-inject', verifyToken, packageController.manualInject);
 
 module.exports = router;

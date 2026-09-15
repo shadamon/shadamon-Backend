@@ -684,6 +684,50 @@ const getDashboardStats = async (req, res) => {
     }
 };
 
+const getUserStats = async (req, res) => {
+    try {
+        const { identifier } = req.params;
+        let query = {};
+        
+        if (mongoose.Types.ObjectId.isValid(identifier)) {
+            query._id = identifier;
+        } else if (identifier.includes('@')) {
+            query.email = new RegExp(`^${identifier}$`, 'i');
+        } else {
+            query.mobile = new RegExp(`^${identifier}$`, 'i');
+        }
+
+        const user = await User.findOne(query);
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+
+        const ProfileView = require('../models/ProfileView');
+        const userSeen = await ProfileView.countDocuments({ viewerId: user._id });
+        const othersSeen = await ProfileView.countDocuments({ viewedProfileId: user._id });
+
+        res.json({
+            success: true,
+            data: {
+                id: user._id,
+                name: user.name,
+                email: user.email,
+                mobile: user.mobile,
+                connectsBalance: user.connectsBalance || 0,
+                validityDate: user.validityDate || null,
+                viewHistory: {
+                    userSeen,
+                    othersSeen,
+                    totalSeen: userSeen + othersSeen
+                }
+            }
+        });
+    } catch (err) {
+        console.error('Error fetching user stats:', err);
+        res.status(500).json({ success: false, message: err.message });
+    }
+};
+
 module.exports = {
     loginAdmin,
     getAllAdmins,
@@ -703,5 +747,6 @@ module.exports = {
     getTransactions,
     deleteTransaction,
     getCurrentAdmin,
-    getDashboardStats
+    getDashboardStats,
+    getUserStats
 };

@@ -67,6 +67,9 @@ router.get('/users/search-mobile', verifyToken, searchUsersByMobile);
 // @route   GET /api/admins/users/count
 router.get('/users/count', verifyToken, getUserCount);
 
+// @route   GET /api/admins/user-stats/:identifier
+router.get('/user-stats/:identifier', verifyToken, require('../controllers/adminController').getUserStats);
+
 // @route   GET /api/admins/users
 router.get('/users', verifyToken, checkPermission('User'), getAllUsers);
 

@@ -57,6 +57,12 @@ exports.sendInvite = async (req, res) => {
             isRead: false
         });
 
+        // Emit realtime notification via socket
+        const io = req.app.get('socketio');
+        if (io) {
+            io.to(receiverId.toString()).emit('notification received');
+        }
+
         // Log Activity for sender
         await Activity.create({
             userId: req.user.id,

@@ -171,6 +171,9 @@ const UserSchema = new mongoose.Schema({
     connectsBalance: {
         type: Number,
         default: 0
+    },
+    validityDate: {
+        type: Date
     }
 });
 
